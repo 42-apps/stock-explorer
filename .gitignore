@@ -1,0 +1,9 @@
+# secrets — NEVER commit the EODHD key
+.eodhd_key
+.env
+
+# API response cache (rebuildable, large)
+data/.cache/
+
+# OS cruft
+.DS_Store

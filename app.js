@@ -1,0 +1,385 @@
+/* ============================================================================
+   Stock Explorer — pick a lens, watch the global equity universe re-rank.
+   Pure vanilla. Data: window.STOCKS (see data/stocks.js). Engine: hand-rolled
+   SVG bars + growth curves, no external libraries.
+   ========================================================================== */
+'use strict';
+
+const DATA = window.STOCKS || { meta:{}, perspectives:[], stocks:[] };
+const PERSP = DATA.perspectives;
+const STOCKS = DATA.stocks;
+const byId = {}; STOCKS.forEach(s => byId[s.id] = s);
+const NOW = 2026;
+
+/* ----------------------------- helpers ----------------------------------- */
+const $ = sel => document.querySelector(sel);
+const $$ = sel => Array.from(document.querySelectorAll(sel));
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const esc = s => (s == null ? '' : ('' + s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])));
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const commas = n => (Math.round(n)).toLocaleString('en-US');
+const nf = (v, suf = '') => (v == null ? '—' : v + suf);
+
+function metricVal(s, p) { return (s.m && s.m[p.field] != null) ? s.m[p.field] : null; }
+
+/* compact value formatting per lens unit */
+function fmtVal(v, p) {
+  if (v == null || isNaN(v)) return '—';
+  const u = p.unit, neg = v < 0, a = Math.abs(v);
+  let core, small = '';
+  if (u === '%') {
+    if (a >= 1e6) core = (a / 1e6 >= 100 ? commas(a / 1e6) : (a / 1e6).toFixed(1).replace(/\.0$/, '')) + 'M';
+    else if (a >= 10000) core = commas(a);
+    else core = a.toFixed(a < 10 ? 1 : 0);
+    small = '%';
+  } else if (u === '%/yr') { core = a.toFixed(1); small = '%/yr'; }
+  else if (u === '$') { core = '$' + a.toFixed(a < 10 ? 2 : 0); }
+  else if (u === '$B') { core = a >= 1000 ? '$' + (a / 1000).toFixed(1).replace(/\.0$/, '') + 'T' : '$' + commas(a) + 'B'; }
+  else if (u === 'yrs') { core = commas(a); small = 'yr'; }
+  else if (u === 'score') { core = a.toFixed(0); }
+  else { core = a.toFixed(2); } // sharpe etc.
+  return (neg ? '−' : '') + core + (small ? `<small>${small}</small>` : '');
+}
+
+/* bar fraction — the rank LEADER always gets the longest bar, regardless of
+   whether the lens sorts ascending (cheap/worst first) or descending. Huge,
+   skewed ranges (e.g. all-time growth) are log-compressed so Altria's 265M%
+   doesn't flatten everyone else. */
+function barFracs(list, p) {
+  const asc = p.dir === 'asc';
+  const fav = list.map(s => { const v = metricVal(s, p); return asc ? -v : v; }); // bigger = better rank
+  const lo = Math.min(...fav);
+  const shifted = fav.map(f => f - lo + 1);            // all ≥ 1, leader is largest
+  const max = Math.max(...shifted, 1), min = Math.min(...shifted);
+  const huge = max / Math.max(min, 1e-9) > 200;
+  const lmax = Math.log10(max) || 1;
+  return shifted.map(s => clamp(huge ? Math.log10(s) / lmax : s / max, 0.05, 1));
+}
+
+/* ----------------------------- state ------------------------------------- */
+let state = { lens: PERSP[0] ? PERSP[0].id : null, region: 'All', sector: 'All' };
+
+function activeP() { return PERSP.find(p => p.id === state.lens) || PERSP[0]; }
+
+function filtered() {
+  return STOCKS.filter(s =>
+    (state.region === 'All' || s.country === state.region) &&
+    (state.sector === 'All' || s.sector === state.sector));
+}
+function ranked() {
+  const p = activeP();
+  const list = filtered().filter(s => metricVal(s, p) != null); // a lens only ranks stocks that have that metric
+  list.sort((a, b) => p.dir === 'asc' ? metricVal(a, p) - metricVal(b, p) : metricVal(b, p) - metricVal(a, p));
+  return list;
+}
+
+/* ----------------------------- lens rail --------------------------------- */
+function buildRail() {
+  const rail = $('#lensRail'); rail.innerHTML = '';
+  const groups = [];
+  PERSP.forEach(p => { let g = groups.find(x => x.name === p.group); if (!g) { g = { name: p.group, items: [] }; groups.push(g); } g.items.push(p); });
+  groups.forEach(g => {
+    const wrap = el('div', 'lens-group');
+    wrap.appendChild(el('div', 'lens-group-h', esc(g.name)));
+    g.items.forEach(p => {
+      const b = el('button', 'lens' + (p.id === state.lens ? ' on' : ''),
+        `<span class="le">${p.emoji}</span><span class="lt">${esc(p.label)}</span>`);
+      b.dataset.id = p.id;
+      b.onclick = () => setLens(p.id);
+      wrap.appendChild(b);
+    });
+    rail.appendChild(wrap);
+  });
+}
+
+function setLens(id) {
+  state.lens = id;
+  $$('.lens').forEach(b => b.classList.toggle('on', b.dataset.id === id));
+  render();
+  try { history.replaceState(null, '', `?lens=${id}`); } catch (e) {}
+}
+
+/* ----------------------------- filters ----------------------------------- */
+function buildFilters() {
+  const regions = ['All', ...Array.from(new Set(STOCKS.map(s => s.country))).sort()];
+  const sectors = ['All', ...Array.from(new Set(STOCKS.map(s => s.sector))).sort()];
+  const rs = $('#regionSel'), ss = $('#sectorSel');
+  rs.innerHTML = regions.map(r => `<option>${esc(r)}</option>`).join('');
+  ss.innerHTML = sectors.map(r => `<option>${esc(r)}</option>`).join('');
+  rs.onchange = () => { state.region = rs.value; render(); };
+  ss.onchange = () => { state.sector = ss.value; render(); };
+}
+
+/* ----------------------------- render ------------------------------------ */
+function render() {
+  const p = activeP();
+  $('#bhEmoji').textContent = p.emoji;
+  $('#bhLabel').textContent = p.label;
+  $('#bhBlurb').textContent = p.blurb;
+
+  const list = ranked();
+  $('#bhCount').textContent = `${list.length} of ${STOCKS.length} companies`;
+
+  const fracs = barFracs(list, p);
+  renderPodium(list, p);
+  renderBoard(list, p, fracs);
+}
+
+function subStat(s, p) {
+  // a contextual secondary figure under each row, depending on the lens
+  switch (p.group) {
+    case 'Dividends': return `current yield ${nf(s.m.curYield, '%')}`;
+    case 'Valuation': return `P/E ${s.m.pe || '—'} · P/B ${s.m.pb || '—'}`;
+    case 'Quality': return `ROIC ${nf(s.m.roic, '%')} · net margin ${nf(s.m.netMargin, '%')}`;
+    case 'Growth': return `CAGR ${nf(s.m.cagr, '%/yr')} · since ${s.ipoYear}`;
+    default: return `mcap $${s.mcap >= 1000 ? (s.mcap/1000).toFixed(1)+'T' : s.mcap+'B'} · since ${s.ipoYear}`;
+  }
+}
+
+function renderPodium(list, p) {
+  const pod = $('#podium'); pod.innerHTML = '';
+  list.slice(0, 3).forEach((s, i) => {
+    const v = metricVal(s, p);
+    const card = el('div', `pod r${i + 1}${v < 0 ? ' neg' : ''}`);
+    card.innerHTML =
+      `<div class="pod-medal">${['🥇','🥈','🥉'][i]}</div>
+       <div class="pod-rank">#${i + 1} · ${esc(p.label)}</div>
+       <div class="pod-name"><span class="pod-flag">${s.flag}</span>${esc(s.name)}${dividBadge(s)}</div>
+       <div class="pod-tk">${esc(s.ticker)} · ${esc(s.sector)} · ${esc(s.country)}</div>
+       <div class="pod-val">${fmtVal(v, p)}</div>
+       <div class="pod-sub">${esc(subStat(s, p))}</div>`;
+    card.onclick = () => openDetail(s.id);
+    pod.appendChild(card);
+  });
+}
+
+function dividBadge(s) {
+  const d = s.m.divStreak || 0;
+  if (d >= 50) return `<span class="badge king">👑 King</span>`;
+  if (d >= 25) return `<span class="badge aris">Aristocrat</span>`;
+  return '';
+}
+
+function renderBoard(list, p, fracs) {
+  const lb = $('#leaderboard'); lb.innerHTML = '';
+  list.forEach((s, i) => {
+    const v = metricVal(s, p);
+    const neg = v < 0;
+    const row = el('div', 'lb-row');
+    row.innerHTML =
+      `<div class="lb-rank">${i + 1}</div>
+       <div class="lb-id">
+         <div class="lb-nm"><span class="f">${s.flag}</span><span class="nm">${esc(s.name)}</span>${dividBadge(s)}</div>
+         <div class="lb-meta"><span class="tk">${esc(s.ticker)}</span> · ${esc(s.sector)} · ${esc(subStat(s, p))}</div>
+       </div>
+       <div class="lb-bar"><div class="lb-bar-fill ${neg ? 'neg' : ''}" style="width:${(fracs[i] * 100).toFixed(1)}%"></div></div>
+       <div class="lb-val ${neg ? 'neg' : 'pos'}">${fmtVal(v, p)}</div>`;
+    row.onclick = () => openDetail(s.id);
+    lb.appendChild(row);
+  });
+}
+
+/* ----------------------------- detail drawer ----------------------------- */
+function openDetail(id) {
+  const s = byId[id]; if (!s) return;
+  const m = s.m;
+  const cell = (k, val, cls) => `<div class="d-cell"><div class="k">${k}</div><div class="v ${cls || ''}">${val}</div></div>`;
+  const pct = (x, suff = '%') => x == null ? '—' : (x < 0 ? '−' : '') + Math.abs(x) + suff;
+  const grow = pctBig(m.absGrowth);
+
+  $('#detailBody').innerHTML =
+    `<div class="d-flag">${s.flag}</div>
+     <div class="d-name">${esc(s.name)} ${dividBadge(s)}</div>
+     <div class="d-sub">${esc(s.ticker)} · ${esc(s.exchange)} · listed ${s.ipoYear} · ${esc(s.country)}</div>
+     <div class="d-chips">
+       <span class="d-chip">${esc(s.sector)}</span>
+       <span class="d-chip">Price ${s.currency} ${s.price}</span>
+       <span class="d-chip">Mcap $${s.mcap >= 1000 ? (s.mcap/1000).toFixed(2)+'T' : s.mcap+'B'}</span>
+     </div>
+     <div class="d-curve">${growthCurveSVG(s)}
+       <div class="cap"><span>$100 in ${s.ipoYear}</span><span>→ <b>${tmValueStr(s, s.ipoYear)}</b> today</span></div>
+     </div>
+     <div class="d-sec-h">Growth</div>
+     <div class="d-grid">
+       ${cell('Total return', grow, m.absGrowth >= 0 ? 'pos' : 'neg')}
+       ${cell('Annual (CAGR)', pct(m.cagr), m.cagr >= 0 ? 'pos' : 'neg')}
+       ${cell('Total return /yr', pct(m.tsr), m.tsr >= 0 ? 'pos' : 'neg')}
+       ${cell('1-yr return', pct(m.ret1y), m.ret1y >= 0 ? 'pos' : 'neg')}
+     </div>
+     <div class="d-sec-h">Dividends</div>
+     <div class="d-grid">
+       ${cell('Current yield', pct(m.curYield))}
+       ${cell('Avg yield (life)', pct(m.avgYield))}
+       ${cell('Cumulative', '$' + m.cumDiv + '/sh')}
+       ${cell('Increase streak', (m.divStreak || 0) + ' yrs')}
+     </div>
+     <div class="d-sec-h">Valuation</div>
+     <div class="d-grid">
+       ${cell('P/E', m.pe || '—')}
+       ${cell('P/B', m.pb || '—')}
+       ${cell('EV/EBITDA', m.evEbitda || '—')}
+       ${cell('Value score', m.valueScore + '/100')}
+     </div>
+     <div class="d-sec-h">Quality &amp; risk</div>
+     <div class="d-grid">
+       ${cell('ROIC', pct(m.roic))}
+       ${cell('Net margin', pct(m.netMargin))}
+       ${cell('Sharpe', (m.sharpe != null ? m.sharpe.toFixed(2) : '—'), m.sharpe >= 0 ? 'pos' : 'neg')}
+       ${cell('Max drawdown', pct(m.maxDD), 'neg')}
+     </div>
+     <div class="d-sec-h">Impact</div>
+     <div class="d-grid">
+       ${cell('Wealth created', fmtVal(m.wealthUSD, { unit: '$B' }), m.wealthUSD >= 0 ? 'pos' : 'neg')}
+       ${cell('Quality score', m.qualityScore + '/100')}
+     </div>
+     <div class="d-tm"><button onclick="window.__openTM('${s.id}', ${s.ipoYear})">⏳ Run the $100 time machine →</button></div>`;
+  $('#detailCard').classList.remove('hidden');
+  $('#scrim').classList.remove('hidden');
+}
+function pctBig(x) { const p = { unit:'%' }; return fmtVal(x, p); }
+function closeDetail() { $('#detailCard').classList.add('hidden'); $('#scrim').classList.add('hidden'); }
+
+/* ----------------------------- growth maths ------------------------------ */
+/* synthesise a $100 path from CAGR when no real series is loaded */
+function pathFor(s, startYear) {
+  const start = Math.max(startYear, s.ipoYear);
+  const g = (s.m.cagr || 0) / 100;
+  const pts = [];
+  for (let y = start; y <= NOW; y++) pts.push([y, 100 * Math.pow(1 + g, y - start)]);
+  if (s.series && s.series.length) {
+    const seg = s.series.filter(p => p[0] >= start);
+    if (seg.length > 1) { const base = seg[0][1]; return seg.map(p => [p[0], 100 * p[1] / base]); }
+  }
+  return pts;
+}
+function tmValue(s, startYear) { const p = pathFor(s, startYear); return p[p.length - 1][1]; }
+function tmValueStr(s, startYear) {
+  const v = tmValue(s, startYear);
+  return v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M' : v >= 1000 ? '$' + commas(v) : '$' + v.toFixed(0);
+}
+
+function curveSVG(path, w, h, neg) {
+  if (path.length < 2) return '';
+  const ys = path.map(p => p[1]);
+  const lo = Math.min(...ys), hi = Math.max(...ys);
+  const logScale = hi / Math.max(lo, 0.01) > 50;
+  const ny = v => logScale ? (Math.log10(Math.max(v, .01)) - Math.log10(Math.max(lo, .01))) / (Math.log10(hi) - Math.log10(Math.max(lo, .01)) || 1) : (v - lo) / (hi - lo || 1);
+  const n = path.length;
+  const X = i => (i / (n - 1)) * w;
+  const Y = v => h - 8 - ny(v) * (h - 16);
+  let d = '', area = `M0 ${h} `;
+  path.forEach((p, i) => { const x = X(i), y = Y(p[1]); d += (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1) + ' '; area += `L${x.toFixed(1)} ${y.toFixed(1)} `; });
+  area += `L${w} ${h} Z`;
+  const col = neg ? 'var(--red)' : 'var(--green)';
+  const fill = neg ? 'rgba(255,107,107,.14)' : 'rgba(66,230,164,.14)';
+  return `<path d="${area}" fill="${fill}"/><path d="${d}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round"/>`;
+}
+function growthCurveSVG(s) {
+  const path = pathFor(s, s.ipoYear);
+  return `<svg viewBox="0 0 380 120" preserveAspectRatio="none">${curveSVG(path, 380, 120, (s.m.cagr || 0) < 0)}</svg>`;
+}
+
+/* ----------------------------- time machine ------------------------------ */
+function buildTM() {
+  const sel = $('#tmStock');
+  sel.innerHTML = STOCKS.slice().sort((a, b) => a.name.localeCompare(b.name))
+    .map(s => `<option value="${s.id}">${esc(s.flag + ' ' + s.name)} (${esc(s.ticker)})</option>`).join('');
+  sel.onchange = renderTM;
+  $('#tmYear').oninput = renderTM;
+}
+function renderTM() {
+  const s = byId[$('#tmStock').value]; if (!s) return;
+  let y = parseInt($('#tmYear').value || s.ipoYear, 10);
+  const start = Math.max(y, s.ipoYear);
+  const path = pathFor(s, y);
+  const end = path[path.length - 1][1];
+  const mult = end / 100;
+  const neg = end < 100;
+  const note = y < s.ipoYear ? ` <span class="mult">(${s.name} only listed in ${s.ipoYear})</span>` : '';
+  $('#tmResult').innerHTML =
+    `<span>$100 in ${start} →</span> <span class="big ${neg ? 'neg' : ''}">${tmValueStr(s, y)}</span>
+     <span class="mult">that's ${mult >= 1 ? mult.toFixed(mult < 10 ? 1 : 0) + '×' : '−' + ((1 - mult) * 100).toFixed(0) + '%'} over ${NOW - start} years · ${s.m.cagr}%/yr</span>${note}`;
+  $('#tmChart').innerHTML = curveSVG(path, 720, 230, neg) + tmAxis(path, 720, 230);
+}
+function tmAxis(path, w, h) {
+  const first = path[0][0], last = path[path.length - 1][0];
+  return `<text x="6" y="${h - 6}" fill="var(--ink-faint)" font-size="12">${first}</text>
+          <text x="${w - 6}" y="${h - 6}" fill="var(--ink-faint)" font-size="12" text-anchor="end">${last}</text>`;
+}
+function openTM(id, year) {
+  $('#tmOverlay').classList.remove('hidden');
+  if (id) { $('#tmStock').value = id; if (year) $('#tmYear').value = year; } // pathFor clamps to ipoYear internally
+  renderTM();
+}
+window.__openTM = (id, year) => { closeDetail(); openTM(id, year); };
+
+/* ----------------------------- search ------------------------------------ */
+function setupSearch() {
+  const inp = $('#search'), box = $('#searchResults');
+  const close = () => { box.classList.add('hidden'); box.innerHTML = ''; };
+  inp.oninput = () => {
+    const q = inp.value.trim().toLowerCase();
+    if (!q) return close();
+    const hits = STOCKS.filter(s => s.name.toLowerCase().includes(q) || s.ticker.toLowerCase().includes(q)).slice(0, 8);
+    if (!hits.length) return close();
+    box.innerHTML = hits.map(s => `<div class="sr-row" data-id="${s.id}"><span>${s.flag}</span><span class="sr-tk">${esc(s.ticker)}</span><span class="sr-nm">${esc(s.name)}</span></div>`).join('');
+    box.classList.remove('hidden');
+    $$('#searchResults .sr-row').forEach(r => r.onclick = () => { openDetail(r.dataset.id); inp.value = ''; close(); });
+  };
+  document.addEventListener('click', e => { if (!e.target.closest('#searchWrap')) close(); });
+}
+
+/* ----------------------------- overlays ---------------------------------- */
+function show(id) { $(id).classList.remove('hidden'); }
+function hide(id) { $(id).classList.add('hidden'); }
+function setupOverlays() {
+  $('#menuBtn').onclick = e => { e.stopPropagation(); $('#menu').classList.toggle('hidden'); };
+  document.addEventListener('click', e => { if (!e.target.closest('.tools')) $('#menu').classList.add('hidden'); });
+  const menu = (btn, ov) => { $(btn).onclick = () => { hide('#menu'); show(ov); }; };
+  menu('#miAbout', '#aboutOverlay'); menu('#miData', '#dataOverlay'); menu('#miWelcome', '#welcomeOverlay');
+  $('#aboutClose').onclick = () => hide('#aboutOverlay');
+  $('#dataClose').onclick = () => hide('#dataOverlay');
+  $('#tmClose').onclick = () => hide('#tmOverlay');
+  $('#detailClose').onclick = closeDetail;
+  $('#scrim').onclick = closeDetail;
+  $('#timeMachineBtn').onclick = () => openTM();
+  $('#welStart').onclick = () => hide('#welcomeOverlay');
+  $('#brandHome').onclick = () => { setLens(PERSP[0].id); $('#regionSel').value = 'All'; $('#sectorSel').value = 'All'; state.region = state.sector = 'All'; render(); };
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeDetail(); $$('.overlay').forEach(o => o.classList.add('hidden')); } });
+
+  // about lenses list + data overlay body
+  $('#aboutLenses').innerHTML = PERSP.map(p => `<li><span class="e">${p.emoji}</span><span><b>${esc(p.label)}</b> — ${esc(p.blurb)}</span></li>`).join('');
+  $('#dataBody').innerHTML = dataOverlayHTML();
+}
+function dataOverlayHTML() {
+  const m = DATA.meta;
+  return `<p>${esc(m.universe || '')}. Snapshot: <b>${esc(m.asOf || '')}</b>.</p>
+    <table>
+      <tr><td>Source</td><td>${esc(m.source || '')}</td></tr>
+      <tr><td>Universe</td><td>${esc(m.universe || '')} · ${STOCKS.length} companies</td></tr>
+      <tr><td>Prices</td><td>Split- and dividend-adjusted closes; total return reinvests dividends.</td></tr>
+      <tr><td>Valuation</td><td>Composite of P/E, P/B, P/S, EV/EBITDA and PEG vs. the universe (0 = cheap, 100 = rich).</td></tr>
+      <tr><td>Quality</td><td>Blend of return on capital, margins and earnings consistency.</td></tr>
+      <tr><td>Caveats</td><td>Survivorship &amp; era bias affect all-time tables; screens are not advice.</td></tr>
+    </table>`;
+}
+
+/* ----------------------------- boot -------------------------------------- */
+function boot() {
+  // sample banner
+  if (DATA.meta && DATA.meta.sample) {
+    document.body.classList.add('banner-on');
+    $('#sampleBanner').classList.remove('hidden');
+    $('#sampleTxt').textContent = `${STOCKS.length} illustrative names with approximate figures — the live EODHD pipeline will replace this with the full global universe.`;
+    document.documentElement.style.setProperty('--banner-h', ($('#sampleBanner').offsetHeight || 36) + 'px');
+  }
+  // deep link
+  const params = new URLSearchParams(location.search);
+  const lp = params.get('lens'); if (lp && PERSP.find(p => p.id === lp)) state.lens = lp;
+
+  buildRail(); buildFilters(); buildTM(); setupSearch(); setupOverlays();
+  render();
+
+  if (!localStorage.getItem('se_seen')) { show('#welcomeOverlay'); try { localStorage.setItem('se_seen', '1'); } catch (e) {} }
+}
+boot();

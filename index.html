@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stock Explorer · The greatest stocks of all time, every which way</title>
+<meta name="description" content="An interactive leaderboard of the best stocks of all time — by absolute growth, annual growth, total return, dividends, valuation, quality and the wealth they created. Pick a lens and watch the rankings re-rank.">
+<meta property="og:title" content="Stock Explorer — the greatest stocks of all time">
+<meta property="og:description" content="Rank global equities by every angle that matters: moonshot growth, dividend kings, cheapest & richest valuations, risk-adjusted winners, and a $100 time machine.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Crect width='256' height='256' rx='58' fill='%230b0f14'/%3E%3Cpolyline points='40,180 96,128 140,156 216,64' fill='none' stroke='%2342e6a4' stroke-width='18' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='216' cy='64' r='16' fill='%2342e6a4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css?v=1">
+</head>
+<body>
+
+  <!-- ===== Header ===== -->
+  <header id="topbar">
+    <div class="brand" id="brandHome" title="Reset">
+      <svg class="logo" viewBox="0 0 256 256" aria-hidden="true">
+        <defs><radialGradient id="lg" cx="50%" cy="28%" r="92%"><stop offset="0%" stop-color="#13362a"/><stop offset="60%" stop-color="#0d1620"/><stop offset="100%" stop-color="#080b10"/></radialGradient></defs>
+        <rect width="256" height="256" rx="58" fill="url(#lg)"/>
+        <polyline points="42,182 98,126 142,154 214,66" fill="none" stroke="#42e6a4" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="214" cy="66" r="15" fill="#42e6a4"/>
+        <g fill="#2a8f6e"><rect x="60" y="196" width="16" height="22" rx="3"/><rect x="120" y="196" width="16" height="22" rx="3"/><rect x="180" y="196" width="16" height="22" rx="3"/></g>
+      </svg>
+      <div class="brand-txt">
+        <span class="brand-kicker">The greatest stocks of all time — every which way</span>
+        <span class="brand-name">Stock&nbsp;Explorer</span>
+        <span class="brand-sub">Pick a lens · watch the world's equities re-rank</span>
+      </div>
+    </div>
+    <div class="tools">
+      <div id="searchWrap">
+        <input id="search" type="text" placeholder="Search a company or ticker…" autocomplete="off" spellcheck="false" aria-label="Search">
+        <div id="searchResults" class="hidden"></div>
+      </div>
+      <button id="timeMachineBtn" class="cta" title="The $100 time machine">⏳ <span class="cta-tx">Time machine</span></button>
+      <button id="menuBtn" class="iconbtn" title="Menu" aria-label="Menu">☰</button>
+      <div id="menu" class="hidden">
+        <button class="mi" id="miAbout"><span class="mi-ic">ℹ</span><span class="mi-tx">About &amp; method</span></button>
+        <button class="mi" id="miData"><span class="mi-ic">🗃️</span><span class="mi-tx">Data &amp; sources</span></button>
+        <button class="mi" id="miWelcome"><span class="mi-ic">👋</span><span class="mi-tx">How it works</span></button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== Sample-data banner ===== -->
+  <div id="sampleBanner" class="hidden">⚠️ <b>Sample data.</b> <span id="sampleTxt"></span></div>
+
+  <!-- ===== Lens rail ===== -->
+  <nav id="lensRail" aria-label="Choose a perspective"></nav>
+
+  <!-- ===== Main ===== -->
+  <main id="board">
+    <div id="boardHead">
+      <div class="bh-title"><span id="bhEmoji">🚀</span><h1 id="bhLabel">Best absolute growth</h1></div>
+      <p id="bhBlurb"></p>
+      <div id="bhControls">
+        <label class="seg" id="regionSeg">Region: <select id="regionSel"></select></label>
+        <label class="seg" id="sectorSeg">Sector: <select id="sectorSel"></select></label>
+        <span id="bhCount" class="bh-count"></span>
+      </div>
+    </div>
+
+    <!-- Podium -->
+    <div id="podium"></div>
+
+    <!-- Leaderboard -->
+    <div id="leaderboard"></div>
+  </main>
+
+  <!-- ===== Detail drawer ===== -->
+  <section id="detailCard" class="hidden" aria-live="polite">
+    <button id="detailClose" aria-label="Close">×</button>
+    <div id="detailBody"></div>
+  </section>
+  <div id="scrim" class="hidden"></div>
+
+  <!-- ===== Time machine overlay ===== -->
+  <div id="tmOverlay" class="overlay hidden">
+    <div class="ov-box wide">
+      <button class="ov-close" id="tmClose" aria-label="Close">×</button>
+      <h2>⏳ The $100 time machine</h2>
+      <p class="ov-lead">If you'd invested <b>$100</b> in this stock and held, what would it be worth today? (Price-only growth; dividends would add more.)</p>
+      <div id="tmControls">
+        <label>Stock <select id="tmStock"></select></label>
+        <label>Invested in <input id="tmYear" type="number" min="1960" max="2025" step="1" value="1990"></label>
+      </div>
+      <div id="tmResult"></div>
+      <svg id="tmChart" viewBox="0 0 720 230" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <p class="ov-cav">Curve is synthesised from each stock's compound annual growth rate when a full price history isn't loaded; the live dataset draws the real path. Past performance is not a forecast.</p>
+    </div>
+  </div>
+
+  <!-- ===== About ===== -->
+  <div id="aboutOverlay" class="overlay hidden">
+    <div class="ov-box">
+      <button class="ov-close" id="aboutClose" aria-label="Close">×</button>
+      <h2>About the Stock Explorer</h2>
+      <p>There is no single "best stock" — it depends entirely on what you value. This explorer lets you switch the <b>lens</b> and watch the same global universe of equities re-rank: the all-time moonshots, the steady compounders, the dividend kings, the bargains, the priced-for-perfection, the highest-quality businesses, and the biggest wealth creators of all time.</p>
+      <h3>The lenses</h3>
+      <ul class="ab-list" id="aboutLenses"></ul>
+      <h3>Methodology &amp; caveats</h3>
+      <p><b>Survivorship bias:</b> companies that went bankrupt or were delisted can drop out of a "currently listed" universe, so all-time growth tables flatter the survivors. <b>Era bias:</b> raw total growth always favours the oldest stocks — that's why <i>annual growth (CAGR)</i> and <i>per-decade</i> views matter. All prices are <b>split- and dividend-adjusted</b>. Valuation lenses are screens built from public multiples, <b>not investment advice</b>.</p>
+      <p class="ov-src">Part of the <a href="https://42-apps.github.io/" target="_blank" rel="noopener">42-apps</a> collection. For education, not financial advice.</p>
+    </div>
+  </div>
+
+  <!-- ===== Data ===== -->
+  <div id="dataOverlay" class="overlay hidden">
+    <div class="ov-box">
+      <button class="ov-close" id="dataClose" aria-label="Close">×</button>
+      <h2>🗃️ Data &amp; sources</h2>
+      <div id="dataBody"></div>
+      <p class="ov-src">Wealth-creation framing inspired by Hendrik Bessembinder's long-run shareholder-return research. Figures are best-available snapshots; corrections welcome.</p>
+    </div>
+  </div>
+
+  <!-- ===== Welcome ===== -->
+  <div id="welcomeOverlay" class="overlay hidden">
+    <div class="ov-box welcome-box">
+      <span class="wel-kicker">Stock Explorer</span>
+      <h2>The greatest stocks of all time 🚀</h2>
+      <p class="wel-tag">One universe of global equities, ranked every which way. There's no single "best" — so pick the <b>lens</b> that matters to you and watch the leaderboard re-rank.</p>
+      <ul class="wel-tips">
+        <li><span class="wt-ic">🎛️</span><span>Switch <b>lenses</b> down the side — growth, dividends, value, quality, the wealth they created.</span></li>
+        <li><span class="wt-ic">🏆</span><span>Every lens gives you a <b>podium</b> and a ranked, at-a-glance <b>bar chart</b>.</span></li>
+        <li><span class="wt-ic">⏳</span><span>Hit the <b>time machine</b> to see what <b>$100</b> would have become.</span></li>
+        <li><span class="wt-ic">🔎</span><span>Click any company for its full <b>metric breakdown</b>.</span></li>
+      </ul>
+      <div class="wel-btns"><button class="wel-start" id="welStart">Explore</button></div>
+      <p class="wel-foot">Not financial advice · for education &amp; curiosity</p>
+    </div>
+  </div>
+
+  <script src="data/stocks.js?v=1"></script>
+  <script src="app.js?v=1"></script>
+</body>
+</html>
