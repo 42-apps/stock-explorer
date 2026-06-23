@@ -6,7 +6,16 @@
 'use strict';
 
 const DATA = window.STOCKS || { meta:{}, perspectives:[], stocks:[] };
-const PERSP = DATA.perspectives;
+const PERSP = (() => {
+  const base = (DATA.perspectives || []).slice();
+  // custom views that aren't a single-field leaderboard (rendered specially)
+  const extra = [
+    { id: 'decade', group: 'Impact', emoji: '🏆', label: 'Champions by decade', blurb: 'The best-performing stock of each decade by total return — a fair fight within each era, where raw all-time growth always favours the oldest names.', custom: true },
+    { id: 'globe', group: 'Impact', emoji: '🌐', label: 'Around the world', blurb: 'Every company on its home turf — bubble size = combined market cap of that country\'s giants. Spin the globe; click a country to see its companies.', custom: true },
+  ];
+  extra.forEach(e => { if (!base.find(p => p.id === e.id)) base.push(e); });
+  return base;
+})();
 const STOCKS = DATA.stocks;
 const byId = {}; STOCKS.forEach(s => byId[s.id] = s);
 const NOW = 2026;
@@ -19,6 +28,7 @@ const esc = s => (s == null ? '' : ('' + s).replace(/[&<>"]/g, c => ({ '&':'&amp
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const commas = n => (Math.round(n)).toLocaleString('en-US');
 const nf = (v, suf = '') => (v == null ? '—' : v + suf);
+const pctStr = v => v == null ? '—' : (v < 0 ? '−' : '+') + (Math.abs(v) >= 10000 ? commas(Math.abs(v)) : Math.abs(v).toFixed(0)) + '%';
 
 function metricVal(s, p) { return (s.m && s.m[p.field] != null) ? s.m[p.field] : null; }
 
@@ -116,6 +126,13 @@ function render() {
   $('#bhEmoji').textContent = p.emoji;
   $('#bhLabel').textContent = p.label;
   $('#bhBlurb').textContent = p.blurb;
+  $('#bhControls').style.display = p.custom ? 'none' : '';
+  const isGlobe = p.id === 'globe';
+  $('#globeWrap').classList.toggle('hidden', !isGlobe);
+  $('#podium').style.display = p.custom ? 'none' : '';
+  $('#leaderboard').style.display = isGlobe ? 'none' : '';
+  if (p.id === 'decade') { $('#podium').innerHTML = ''; return renderDecade(); }
+  if (isGlobe) { $('#bhCount').textContent = ''; return renderGlobe(); }
 
   const list = ranked();
   $('#bhCount').textContent = `${list.length} of ${STOCKS.length} companies`;
@@ -123,6 +140,85 @@ function render() {
   const fracs = barFracs(list, p);
   renderPodium(list, p);
   renderBoard(list, p, fracs);
+}
+
+/* ----------------------------- champions by decade ----------------------- */
+function renderDecade() {
+  $('#bhCount').textContent = '';
+  const decades = ['1970s', '1980s', '1990s', '2000s', '2010s', '2020s'];
+  const lb = $('#leaderboard'); lb.innerHTML = '';
+  const grid = el('div', 'decade-grid');
+  decades.forEach(dk => {
+    const ranked = STOCKS.filter(s => s.dec && s.dec[dk] != null).sort((a, b) => b.dec[dk] - a.dec[dk]);
+    if (!ranked.length) return;
+    const win = ranked[0];
+    const card = el('div', 'decade-card');
+    card.innerHTML =
+      `<div class="dc-head"><span class="dc-decade">${dk}</span><span class="dc-n">${ranked.length} stocks</span></div>
+       <div class="dc-winner" data-id="${win.id}">
+         <span class="dc-medal">🏆</span>
+         <div class="dc-wnm"><span class="dc-f">${win.flag}</span>${esc(win.name)}</div>
+         <div class="dc-wsub">${esc(win.ticker)} · ${esc(win.sector)}</div>
+         <div class="dc-val">${pctStr(win.dec[dk])}</div>
+       </div>
+       <div class="dc-rest">` +
+      ranked.slice(1, 5).map((s, i) =>
+        `<div class="dc-row" data-id="${s.id}"><span class="dc-rank">${i + 2}</span><span>${s.flag} ${esc(s.name)}</span><span class="dc-rv">${pctStr(s.dec[dk])}</span></div>`).join('') +
+      `</div>`;
+    grid.appendChild(card);
+  });
+  lb.appendChild(grid);
+  lb.querySelectorAll('[data-id]').forEach(e => e.onclick = () => openDetail(e.dataset.id));
+}
+
+/* ----------------------------- around the world (globe) ------------------ */
+let _globe = null, _globePosed = false;
+const mcStr = m => '$' + (m >= 1000 ? (m / 1000).toFixed(1) + 'T' : Math.round(m) + 'B');
+function renderGlobe() {
+  const host = $('#globeViz'), GEO = window.COUNTRY_GEO || {};
+  if (typeof Globe !== 'function') { host.innerHTML = '<p style="padding:40px;color:var(--ink-faint)">Globe engine unavailable.</p>'; return; }
+  // aggregate companies by home country
+  const byC = {};
+  STOCKS.forEach(s => {
+    const g = GEO[s.country]; if (!g) return;
+    const e = (byC[s.country] ||= { country: s.country, flag: s.flag, lat: g.lat, lng: g.lon, region: g.region, count: 0, mcap: 0, list: [] });
+    e.count++; e.mcap += s.mcap || 0; e.list.push(s);
+  });
+  const pts = Object.values(byC); pts.forEach(p => p.list.sort((a, b) => b.mcap - a.mcap));
+  const lmax = Math.log10(Math.max(...pts.map(p => p.mcap), 1) + 1);
+  const REGCOL = { 'North America': '#42e6a4', 'Europe & Central Asia': '#5aa9ff', 'East Asia & Pacific': '#ffcd56', 'Latin America & Caribbean': '#ff6b6b', 'South Asia': '#a98bff', 'Middle East & North Africa': '#f6c94a', 'Sub-Saharan Africa': '#7df3c4' };
+  const norm = d => Math.log10(d.mcap + 1) / lmax;
+
+  if (!_globe) {
+    _globe = Globe()(host)
+      .backgroundColor('rgba(0,0,0,0)')
+      .showAtmosphere(true).atmosphereColor('#42e6a4').atmosphereAltitude(0.16)
+      .showGraticules(true)
+      .pointLat('lat').pointLng('lng')
+      .pointAltitude(d => 0.05 + 0.6 * norm(d))
+      .pointRadius(d => 0.3 + 0.9 * norm(d))
+      .pointColor(d => REGCOL[d.region] || '#42e6a4')
+      .pointLabel(d => `<div class="globe-tip"><b>${d.flag} ${esc(d.country)}</b><br>${d.count} ${d.count === 1 ? 'company' : 'companies'} · ${mcStr(d.mcap)}<br><span class="gt-top">${esc(d.list[0].name)} ↗</span></div>`)
+      .onPointClick(d => showCountryPanel(d));
+    try { _globe.globeMaterial().color.set('#102a24'); } catch (e) {}
+    try { const c = _globe.controls(); c.autoRotate = true; c.autoRotateSpeed = 0.55; c.enableZoom = true; } catch (e) {}
+  }
+  _globe.pointsData(pts);
+  _globe.width(host.clientWidth || 800).height(Math.max(window.innerHeight - 250, 420));
+  if (!_globePosed) { _globe.pointOfView({ lat: 22, lng: -15, altitude: 2.3 }); _globePosed = true; }
+}
+function showCountryPanel(d) {
+  const info = $('#globeInfo');
+  info.innerHTML =
+    `<button class="gi-close" id="giClose">×</button>
+     <div class="gi-h">${d.flag} ${esc(d.country)}</div>
+     <div class="gi-sub">${d.count} ${d.count === 1 ? 'company' : 'companies'} · combined ${mcStr(d.mcap)}</div>
+     <div class="gi-list">` +
+    d.list.slice(0, 14).map((s, i) => `<div class="gi-row" data-id="${s.id}"><span class="gi-rank">${i + 1}</span><span class="gi-nm">${esc(s.name)}</span><span class="gi-mc">${mcStr(s.mcap)}</span></div>`).join('') +
+    `</div>`;
+  info.classList.remove('hidden');
+  $('#giClose').onclick = () => info.classList.add('hidden');
+  info.querySelectorAll('[data-id]').forEach(e => e.onclick = () => openDetail(e.dataset.id));
 }
 
 function subStat(s, p) {

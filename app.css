@@ -148,6 +148,45 @@ body.banner-on #lensRail{top:calc(67px + var(--banner-h,36px) + 6px);height:calc
 .badge.king{background:#3a2d08;color:var(--gold);border:1px solid #6b5410}
 .badge.aris{background:#0e2a22;color:var(--mint);border:1px solid var(--green-d)}
 
+/* ---------- champions by decade ---------- */
+.decade-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.decade-card{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line2);border-radius:var(--radius);padding:14px 16px 8px}
+.dc-head{display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:10px}
+.dc-decade{font-size:22px;font-weight:800;letter-spacing:-.02em;color:var(--mint)}
+.dc-n{font-size:11.5px;color:var(--ink-faint)}
+.dc-winner{position:relative;cursor:pointer;padding:6px 8px;border-radius:10px;background:linear-gradient(180deg,#221d0c,#11161d);border:1px solid var(--gold);margin-bottom:10px}
+.dc-winner:hover{box-shadow:0 0 0 3px rgba(246,201,74,.12)}
+.dc-medal{position:absolute;top:8px;right:10px;font-size:22px}
+.dc-wnm{font-size:16px;font-weight:800;display:flex;align-items:center;gap:7px;padding-right:28px}
+.dc-wsub{font-size:11.5px;color:var(--ink-faint);margin-top:1px}
+.dc-val{font-size:26px;font-weight:800;color:var(--green);margin-top:6px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.dc-rest{display:flex;flex-direction:column}
+.dc-row{display:grid;grid-template-columns:20px 1fr auto;gap:8px;align-items:center;padding:5px 8px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--ink-dim)}
+.dc-row:hover{background:var(--panel2)}
+.dc-rank{color:var(--ink-faint);font-weight:700;text-align:center}
+.dc-rv{font-weight:700;color:var(--green);font-variant-numeric:tabular-nums}
+.dc-row span:nth-child(2){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- around the world (globe) ---------- */
+#globeWrap{position:relative}
+#globeViz{width:100%;min-height:440px;display:flex;justify-content:center;cursor:grab}
+#globeViz:active{cursor:grabbing}
+#globeViz canvas{display:block}
+#globeHint{text-align:center;font-size:12px;color:var(--ink-faint);margin-top:6px}
+.globe-tip{font:13px -apple-system,sans-serif;color:#fff;background:#0d1620;border:1px solid #2e4150;border-radius:8px;padding:6px 9px;max-width:230px}
+.globe-tip .gt-top{color:var(--ink-dim)}
+#globeInfo{position:absolute;top:8px;right:8px;width:min(330px,86vw);max-height:86%;overflow:auto;background:rgba(13,22,32,.95);border:1px solid var(--line2);border-radius:var(--radius-s);box-shadow:var(--shadow);padding:14px 14px 10px;backdrop-filter:blur(6px)}
+.gi-close{position:absolute;top:7px;right:11px;font-size:22px;color:var(--ink-faint);line-height:1}
+.gi-close:hover{color:var(--ink)}
+.gi-h{font-size:18px;font-weight:800}
+.gi-sub{font-size:12px;color:var(--ink-faint);margin:2px 0 10px}
+.gi-list{display:flex;flex-direction:column;gap:2px}
+.gi-row{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;padding:5px 7px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--ink-dim)}
+.gi-row:hover{background:var(--panel2)}
+.gi-rank{color:var(--ink-faint);font-weight:700;text-align:center}
+.gi-nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gi-mc{color:var(--green);font-weight:700;font-variant-numeric:tabular-nums}
+
 /* ---------- detail drawer ---------- */
 #scrim{position:fixed;inset:0;z-index:55;background:rgba(4,7,11,.6);backdrop-filter:blur(2px)}
 #detailCard{

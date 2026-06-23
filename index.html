@@ -67,6 +67,13 @@
 
     <!-- Leaderboard -->
     <div id="leaderboard"></div>
+
+    <!-- Globe view -->
+    <div id="globeWrap" class="hidden">
+      <div id="globeViz"></div>
+      <div id="globeInfo" class="hidden"></div>
+      <div id="globeHint">🖱️ Drag to spin · scroll to zoom · click a country for its giants</div>
+    </div>
   </main>
 
   <!-- ===== Detail drawer ===== -->
@@ -133,6 +140,8 @@
     </div>
   </div>
 
+  <script src="lib/globe.gl.min.js"></script>
+  <script src="data/countries.js?v=1"></script>
   <script src="data/stocks.js?v=1"></script>
   <script src="app.js?v=1"></script>
 </body>

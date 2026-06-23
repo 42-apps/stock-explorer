@@ -94,7 +94,7 @@ const pctRank = (arr, v) => { if (v == null) return null; const s = arr.filter(x
 const yearsBetween = (a, b) => (new Date(b) - new Date(a)) / (365.25 * 864e5);
 
 /* small country→flag map (extend as needed) */
-const FLAG = { 'USA':'🇺🇸','United States':'🇺🇸','United Kingdom':'🇬🇧','Germany':'🇩🇪','France':'🇫🇷','Netherlands':'🇳🇱','Switzerland':'🇨🇭','Canada':'🇨🇦','Japan':'🇯🇵','China':'🇨🇳','Hong Kong':'🇭🇰','India':'🇮🇳','Taiwan':'🇹🇼','South Korea':'🇰🇷','Denmark':'🇩🇰','Sweden':'🇸🇪','Spain':'🇪🇸','Italy':'🇮🇹','Australia':'🇦🇺','Brazil':'🇧🇷','Saudi Arabia':'🇸🇦','Ireland':'🇮🇪','Israel':'🇮🇱','Bermuda':'🇧🇲','Singapore':'🇸🇬','Mexico':'🇲🇽','Argentina':'🇦🇷','South Africa':'🇿🇦','Norway':'🇳🇴','Finland':'🇫🇮','Belgium':'🇧🇪','Luxembourg':'🇱🇺','Cayman Islands':'🇰🇾','Russia':'🇷🇺','Indonesia':'🇮🇩','Greece':'🇬🇷','Portugal':'🇵🇹','Austria':'🇦🇹','Chile':'🇨🇱','New Zealand':'🇳🇿','Thailand':'🇹🇭','Turkey':'🇹🇷','Philippines':'🇵🇭','Malaysia':'🇲🇾','Poland':'🇵🇱','Colombia':'🇨🇴','Vietnam':'🇻🇳','United Arab Emirates':'🇦🇪','Qatar':'🇶🇦','Puerto Rico':'🇵🇷','Jersey':'🇯🇪' };
+const FLAG = { 'USA':'🇺🇸','United States':'🇺🇸','United Kingdom':'🇬🇧','Germany':'🇩🇪','France':'🇫🇷','Netherlands':'🇳🇱','Switzerland':'🇨🇭','Canada':'🇨🇦','Japan':'🇯🇵','China':'🇨🇳','Hong Kong':'🇭🇰','India':'🇮🇳','Taiwan':'🇹🇼','South Korea':'🇰🇷','Denmark':'🇩🇰','Sweden':'🇸🇪','Spain':'🇪🇸','Italy':'🇮🇹','Australia':'🇦🇺','Brazil':'🇧🇷','Saudi Arabia':'🇸🇦','Ireland':'🇮🇪','Israel':'🇮🇱','Bermuda':'🇧🇲','Singapore':'🇸🇬','Mexico':'🇲🇽','Argentina':'🇦🇷','South Africa':'🇿🇦','Norway':'🇳🇴','Finland':'🇫🇮','Belgium':'🇧🇪','Luxembourg':'🇱🇺','Cayman Islands':'🇰🇾','Russia':'🇷🇺','Indonesia':'🇮🇩','Greece':'🇬🇷','Portugal':'🇵🇹','Austria':'🇦🇹','Chile':'🇨🇱','New Zealand':'🇳🇿','Thailand':'🇹🇭','Turkey':'🇹🇷','Philippines':'🇵🇭','Malaysia':'🇲🇾','Poland':'🇵🇱','Colombia':'🇨🇴','Vietnam':'🇻🇳','United Arab Emirates':'🇦🇪','Qatar':'🇶🇦','Puerto Rico':'🇵🇷','Jersey':'🇯🇪','Uruguay':'🇺🇾','Peru':'🇵🇪','Kazakhstan':'🇰🇿','Cyprus':'🇨🇾','Greece':'🇬🇷','Indonesia':'🇮🇩','Philippines':'🇵🇭','Thailand':'🇹🇭','Vietnam':'🇻🇳','South Africa':'🇿🇦','Monaco':'🇲🇨','Gibraltar':'🇬🇮' };
 const flagFor = c => FLAG[c] || '🏳️';
 /* keep only genuine common stocks on a real US exchange (no OTC/PINK/grey) */
 const MAJOR_EXCH = new Set(['NYSE', 'NASDAQ', 'NYSE ARCA', 'NYSE MKT', 'NYSE American', 'AMEX', 'BATS']);
@@ -103,28 +103,35 @@ const BASE_FLOOR = 0.02;    // reject sub-penny historical bases (corrupted spli
 
 /* ---- 1. universe selection --------------------------------------------- */
 async function pickUniverse() {
-  // Use the screener (sorted by market cap desc) to get the genuine largest
-  // companies cheaply, instead of fetching fundamentals for every ticker.
+  // The screener caps offset at ~1000, so to reach deeper than the mega-caps we
+  // sweep market-cap BANDS (each band well under the cap), all on the US "virtual"
+  // exchange. US screener market caps are clean USD; foreign giants appear here as
+  // ADRs (also USD) — their true home country comes from AddressData later.
+  const BANDS = [[100e9, null], [30e9, 100e9], [10e9, 30e9], [5e9, 10e9], [2e9, 5e9]];
   let rows = [];
-  const pages = Math.ceil(Math.min(LIMIT * 1.8, 1000) / 100); // screener caps offset ~1000
-  for (let i = 0; i < pages; i++) {
-    const j = await getJSON(epScreener(i * 100, REGION), { ttlDays: 3 });
-    const data = (j && (j.data || (Array.isArray(j) ? j : []))) || [];
-    if (!data.length) break;
-    rows.push(...data);
+  for (const [lo, hi] of BANDS) {
+    const filters = [['exchange', '=', 'us'], ['market_capitalization', '>', lo]];
+    if (hi) filters.push(['market_capitalization', '<', hi]);
+    const enc = encodeURIComponent(JSON.stringify(filters));
+    for (let off = 0; off < 1000; off += 100) {
+      const j = await getJSON(`${BASE}/screener?${tok}&sort=market_capitalization.desc&filters=${enc}&limit=100&offset=${off}`, { ttlDays: 3 });
+      const data = (j && (j.data || [])) || [];
+      rows.push(...data);
+      if (data.length < 100) break;
+    }
   }
-  // map → filter junk → dedupe share classes / cross-listings by company name
+  // dedupe share classes / cross-listings by company name, keep the biggest
   const seen = new Map();
   for (const r of rows) {
     const mc = +r.market_capitalization || 0;
     if (mc <= 0) continue;
-    const key = normName(r.name);
-    if (!key) continue;
-    const cand = { ticker: `${r.code}.${(r.exchange || 'US')}`, name: r.name, exch: r.exchange || 'US', sector: r.sector, mcapUSD: mc / 1e9 };
+    const key = normName(r.name); if (!key) continue;
+    const cand = { ticker: `${r.code}.${r.exchange || 'US'}`, name: r.name, exch: r.exchange || 'US', sector: r.sector, mcapUSD: mc / 1e9 };
     if (!seen.has(key) || seen.get(key).mcapUSD < cand.mcapUSD) seen.set(key, cand);
   }
-  const list = [...seen.values()].sort((a, b) => b.mcapUSD - a.mcapUSD).slice(0, LIMIT);
-  console.log(`Universe: ${list.length} ${REGION.toUpperCase()}-listed names (deduped) by market cap — top: ${list.slice(0, 5).map(c => c.ticker).join(', ')}`);
+  // build extra to absorb common-stock/exchange filter drop-outs; main() re-cuts to LIMIT
+  const list = [...seen.values()].sort((a, b) => b.mcapUSD - a.mcapUSD).slice(0, Math.ceil(LIMIT * 1.4));
+  console.log(`Universe: ${rows.length} screener rows → ${seen.size} unique companies → ${list.length} candidates (down to ~$2B)`);
   return list;
 }
 
@@ -207,9 +214,19 @@ async function buildStock(c) {
 
   const r1 = trailingReturn(px, 1) * 100;
 
+  // real home country from HQ address (ADRs list as USA but are domiciled abroad)
+  let homeCountry = (G.AddressData && G.AddressData.Country) || G.CountryName || 'United States';
+  if (homeCountry === 'USA') homeCountry = 'United States'; // canonicalise so US names merge
+  // per-decade total return (powers the champions-by-decade view)
+  const dec = {};
+  for (const ds of [1970, 1980, 1990, 2000, 2010, 2020]) {
+    const seg = px.filter(r => { const y = +r.d.slice(0, 4); return y >= ds && y <= ds + 9; });
+    if (seg.length >= 6) { const a0 = seg[0].adj || seg[0].p, a1 = seg[seg.length - 1].adj || seg[seg.length - 1].p; if (a0 > 0) dec[ds + 's'] = round((a1 / a0 - 1) * 100); }
+  }
+
   return {
     id: G.Code, ticker: c.ticker, name: G.Name, exchange: G.Exchange || c.exch,
-    country: G.CountryName || 'United States', flag: flagFor(G.CountryName), sector: G.Sector || c.sector || 'Other',
+    country: homeCountry, flag: flagFor(homeCountry), sector: G.Sector || c.sector || 'Other',
     currency: G.CurrencyCode || 'USD', ipoYear: +first.d.slice(0, 4), price: num(last.p), // "since" = first available price
     mcap: +(mcapUSD / 1e9).toFixed(2),
     m: {
@@ -227,7 +244,7 @@ async function buildStock(c) {
       ret1y: round(r1, 1),
       valueScore: null, qualityScore: null, // filled cross-sectionally below
     },
-    series: downsampleSeries(px),
+    series: downsampleSeries(px), dec,
   };
 }
 
