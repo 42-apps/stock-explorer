@@ -13,6 +13,8 @@ const PERSP = (() => {
     { id: 'decade', group: 'Impact', emoji: '🏆', label: 'Champions by decade', blurb: 'The best-performing stock of each decade by total return — a fair fight within each era, where raw all-time growth always favours the oldest names.', custom: true },
     { id: 'globe', group: 'Impact', emoji: '🌐', label: 'Around the world', blurb: 'Every company on its home turf — bubble size = combined market cap of that country\'s giants. Spin the globe; click a country to see its companies.', custom: true },
     { id: 'graveyard', group: 'Impact', emoji: '🪦', label: 'The graveyard', blurb: 'Famous fortunes destroyed — giants that fell to near-zero and were delisted. The cautionary tales every "greatest stocks" list forgets.', custom: true },
+    { id: 'picks-growth', group: "Claude's Picks", emoji: '✦', label: 'Growth picks (10yr)', blurb: "Claude's reasoned bets for the next decade's biggest growth — an AI's opinion for curiosity, NOT financial advice.", custom: true },
+    { id: 'picks-dividend', group: "Claude's Picks", emoji: '✦', label: 'Dividend picks (10yr)', blurb: "Claude's picks for the best 10-year total return from dividends + growth — opinion, NOT financial advice.", custom: true },
   ];
   extra.forEach(e => { if (!base.find(p => p.id === e.id)) base.push(e); });
   return base;
@@ -153,6 +155,7 @@ function render() {
   $('#leaderboard').style.display = isGlobe ? 'none' : '';
   if (p.id === 'decade') { $('#podium').innerHTML = ''; return renderDecade(); }
   if (p.id === 'graveyard') { $('#podium').innerHTML = ''; $('#bhCount').textContent = ''; return renderGraveyard(); }
+  if (p.id === 'picks-growth' || p.id === 'picks-dividend') { $('#podium').innerHTML = ''; $('#bhCount').textContent = ''; return renderPicks(p.id === 'picks-growth' ? 'growth' : 'dividend'); }
   if (isGlobe) { $('#bhCount').textContent = ''; return renderGlobe(); }
 
   const list = ranked();
@@ -208,6 +211,31 @@ function renderGraveyard() {
        <div class="gy-drop">${s.peakDrop}%</div>
        <div class="gy-cash">$10,000 → <b>${left >= 1 ? '$' + commas(left) : '$' + left.toFixed(2)}</b></div>
        <div class="gy-peak">peaked $${commas(s.peakPrice)} in ${s.peakYear}</div>`;
+    grid.appendChild(card);
+  });
+  lb.appendChild(grid);
+  lb.querySelectorAll('[data-id]').forEach(e => e.onclick = () => openDetail(e.dataset.id));
+}
+
+/* ----------------------------- Claude's Picks ---------------------------- */
+function renderPicks(type) {
+  const lb = $('#leaderboard'); lb.innerHTML = '';
+  lb.appendChild(el('div', 'pk-disclaimer', `✦ <b>Claude's Picks</b> — an AI's reasoned opinion as of ${esc((DATA.meta || {}).picksAsOf || '')}, for curiosity &amp; education. <b>Not financial advice</b>; the 10-year projections are illustrative estimates that will be wrong in unknowable ways. Do your own research.`));
+  const picks = STOCKS.filter(s => s.pick && s.pick[type]).sort((a, b) => a.pick[type].rank - b.pick[type].rank);
+  const grid = el('div', 'pk-grid');
+  picks.forEach(s => {
+    const pk = s.pick[type];
+    const actual = type === 'growth'
+      ? `track record: ${nf(s.m.cagr, '%/yr')} since ${s.ipoYear}`
+      : `today: ${nf(s.m.curYield, '%')} yield · ${nf(s.m.divCagr, '%/yr')} dividend growth`;
+    const card = el('div', 'pk-card'); card.dataset.id = s.id;
+    card.innerHTML =
+      `<div class="pk-top"><span class="pk-rank">#${pk.rank}</span><span class="pk-conv pk-${pk.conviction}">${pk.conviction} conviction</span></div>
+       <div class="pk-nm">${s.flag} ${esc(s.name)} <span class="pk-tk">${esc(s.ticker.replace('.US', ''))}</span></div>
+       <div class="pk-proj">${esc(pk.projection)} <span class="pk-projlbl">projected · 10yr</span></div>
+       <div class="pk-actual">${esc(actual)}</div>
+       <div class="pk-rat">${esc(pk.rationale)}</div>
+       <div class="pk-risk"><b>Biggest risk:</b> ${esc(pk.risks)}</div>`;
     grid.appendChild(card);
   });
   lb.appendChild(grid);
@@ -285,7 +313,7 @@ function renderPodium(list, p) {
     card.innerHTML =
       `<div class="pod-medal">${['🥇','🥈','🥉'][i]}</div>
        <div class="pod-rank">#${i + 1} · ${esc(p.label)}</div>
-       <div class="pod-name"><span class="pod-flag">${s.flag}</span>${esc(s.name)}${dividBadge(s)}${deadBadge(s)}${cr ? `<span class="badge ref" style="color:${cr};border-color:${cr}">reference</span>` : ''}</div>
+       <div class="pod-name"><span class="pod-flag">${s.flag}</span>${esc(s.name)}${dividBadge(s)}${deadBadge(s)}${pickBadge(s)}${cr ? `<span class="badge ref" style="color:${cr};border-color:${cr}">reference</span>` : ''}</div>
        <div class="pod-tk">${esc(s.ticker)} · ${esc(s.sector)} · ${esc(s.country)}</div>
        <div class="pod-val"${cr ? ` style="color:${cr}"` : ''}>${fmtVal(v, p)}</div>
        <div class="pod-sub">${esc(subStat(s, p))}</div>`;
@@ -301,6 +329,7 @@ function dividBadge(s) {
   return '';
 }
 function deadBadge(s) { return s.delisted ? `<span class="badge dead">💀 ${s.delistYear}</span>` : ''; }
+function pickBadge(s) { return s.pick ? `<span class="badge pick">✦ Pick</span>` : ''; }
 
 function renderBoard(list, p, fracs) {
   const lb = $('#leaderboard'); lb.innerHTML = '';
@@ -308,13 +337,13 @@ function renderBoard(list, p, fracs) {
     const v = metricVal(s, p);
     const neg = v < 0;
     const cr = s.kind === 'crypto' ? s.refColor : null;
-    const row = el('div', 'lb-row' + (cr ? ' lb-crypto' : ''));
+    const row = el('div', 'lb-row' + (cr ? ' lb-crypto' : '') + (s.pick ? ' lb-pick' : ''));
     if (cr) row.style.borderColor = cr;
     const barStyle = `width:${(fracs[i] * 100).toFixed(1)}%` + (cr ? `;background:${cr}` : '');
     row.innerHTML =
       `<div class="lb-rank">${i + 1}</div>
        <div class="lb-id">
-         <div class="lb-nm"><span class="f">${s.flag}</span><span class="nm">${esc(s.name)}</span>${dividBadge(s)}${deadBadge(s)}${cr ? `<span class="badge ref" style="color:${cr};border-color:${cr}">reference</span>` : ''}</div>
+         <div class="lb-nm"><span class="f">${s.flag}</span><span class="nm">${esc(s.name)}</span>${dividBadge(s)}${deadBadge(s)}${pickBadge(s)}${cr ? `<span class="badge ref" style="color:${cr};border-color:${cr}">reference</span>` : ''}</div>
          <div class="lb-meta"><span class="tk">${esc(s.ticker)}</span> · ${esc(s.sector)} · ${esc(subStat(s, p))}</div>
        </div>
        <div class="lb-bar"><div class="lb-bar-fill ${neg ? 'neg' : ''}" style="${barStyle}"></div></div>
@@ -334,7 +363,7 @@ function openDetail(id) {
 
   $('#detailBody').innerHTML =
     `<div class="d-flag">${s.flag}</div>
-     <div class="d-name">${esc(s.name)} ${dividBadge(s)}${deadBadge(s)}</div>
+     <div class="d-name">${esc(s.name)} ${dividBadge(s)}${deadBadge(s)}${pickBadge(s)}</div>
      <div class="d-sub">${esc(s.ticker)} · ${esc(s.exchange)} · listed ${s.ipoYear} · ${esc(s.country)}</div>
      ${s.delisted ? `<div class="d-dead">🪦 Delisted ${s.delistYear} · peaked $${s.peakPrice} in ${s.peakYear} · <b>${s.peakDrop}%</b> from peak</div>` : ''}
      ${s.kind === 'crypto' ? `<div class="d-ref" style="border-color:${s.refColor};color:${s.refColor}">${s.flag} Reference asset — a cryptocurrency shown for comparison, not a stock.</div>` : ''}
@@ -379,6 +408,10 @@ function openDetail(id) {
        ${cell('Wealth created', fmtVal(m.wealthUSD, { unit: '$B' }), m.wealthUSD >= 0 ? 'pos' : 'neg')}
        ${cell('Quality score', m.qualityScore + '/100')}
      </div>
+     ${s.pick ? `<div class="d-sec-h">✦ Claude's Pick</div>` +
+       (s.pick.growth ? `<div class="d-pick"><div class="d-pick-h">Growth · <b>${esc(s.pick.growth.projection)}</b> · ${esc(s.pick.growth.conviction)} conviction</div><div class="d-pick-r">${esc(s.pick.growth.rationale)}</div></div>` : '') +
+       (s.pick.dividend ? `<div class="d-pick"><div class="d-pick-h">Dividend / total return · <b>${esc(s.pick.dividend.projection)}</b> · ${esc(s.pick.dividend.conviction)} conviction</div><div class="d-pick-r">${esc(s.pick.dividend.rationale)}</div></div>` : '') +
+       `<div class="d-pick-dis">AI opinion, not financial advice.</div>` : ''}
      <div class="d-tm"><button onclick="window.__openTM('${s.id}', ${s.ipoYear})">⏳ Run the $100 time machine →</button></div>`;
   $('#detailCard').classList.remove('hidden');
   $('#scrim').classList.remove('hidden');

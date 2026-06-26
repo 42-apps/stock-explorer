@@ -127,6 +127,17 @@ const CRYPTO = [
   ['ETH-USD.CC', 'Ethereum', 'Ξ', '#7b8cff'],
 ];
 
+/* Claude's Picks (AI opinion, not advice) — attached to matching stocks */
+const PICKS = JSON.parse(readFileSync(join(__dir, 'data', 'picks.json'), 'utf8'));
+const PICK_TICKERS = [...new Set([...PICKS.growth, ...PICKS.dividend].map(p => p.ticker + '.US'))];
+function attachPicks(stocks) {
+  const byT = {}; stocks.forEach(s => { byT[s.ticker] = s; });
+  PICKS.growth.forEach((p, i) => { const s = byT[p.ticker + '.US']; if (s) (s.pick ||= {}).growth = { ...p, rank: i + 1 }; });
+  PICKS.dividend.forEach((p, i) => { const s = byT[p.ticker + '.US']; if (s) (s.pick ||= {}).dividend = { ...p, rank: i + 1 }; });
+  const g = PICKS.growth.filter(p => byT[p.ticker + '.US']).length, d = PICKS.dividend.filter(p => byT[p.ticker + '.US']).length;
+  console.log(`  Claude's Picks attached: ${g}/${PICKS.growth.length} growth, ${d}/${PICKS.dividend.length} dividend`);
+}
+
 /* ---- 1. universe selection --------------------------------------------- */
 async function pickUniverse() {
   // The screener caps offset at ~1000, so to reach deeper than the mega-caps we
@@ -446,6 +457,7 @@ async function pool(items, worker, n) {
   const shortlist = TICKERS
     ? TICKERS.split(',').map(t => { t = t.trim(); return { ticker: t, name: t, exch: (t.split('.')[1] || 'US') }; })
     : await pickUniverse();
+  if (!TICKERS) { const haveT = new Set(shortlist.map(c => c.ticker)); PICK_TICKERS.forEach(t => { if (!haveT.has(t)) shortlist.push({ ticker: t, name: t, exch: (t.split('.')[1] || 'US') }); }); }
   console.log(`Fetching fundamentals + history for ${shortlist.length} candidates…`);
   let stocks = (await pool(shortlist, buildStock, CONCURRENCY)).filter(Boolean);
   console.log(`\n  built ${stocks.length} stocks`);
@@ -485,11 +497,14 @@ async function pool(items, worker, n) {
   console.log(`  + ${crypto.length} crypto reference points`);
   stocks.push(...crypto);
 
+  attachPicks(stocks);
+
   const out = {
     meta: {
       asOf: new Date().toISOString().slice(0, 10), source: 'EODHD All-In-One',
       universe: `Global equities · US-listed (incl. ADRs) · ${stocks.length} companies`,
       count: stocks.length, currency: 'USD', sample: false,
+      picksAsOf: PICKS.asOf, picksDisclaimer: PICKS.disclaimer,
       benchmarks: { SPY: bench.SPY && { from: bench.SPY.from, cagr: bench.SPY.cagr }, QQQ: bench.QQQ && { from: bench.QQQ.from, cagr: bench.QQQ.cagr } },
     },
     perspectives: SAMPLE_PERSPECTIVES(),
