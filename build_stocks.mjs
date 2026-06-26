@@ -84,9 +84,13 @@ const epDiv = t => `${BASE}/div/${t}?${tok}&from=${HIST_FROM}`;
 const epSplits = t => `${BASE}/splits/${t}?${tok}&from=${HIST_FROM}`;
 const epScreener = (off, region) => `${BASE}/screener?${tok}&sort=market_capitalization.desc&filters=${encodeURIComponent(`[["exchange","=","${region}"]]`)}&limit=100&offset=${off}`;
 /* normalise a company name so share classes / suffixes collapse to one entity */
-const normName = n => ('' + n).toLowerCase()
-  .replace(/\b(inc|corp|corporation|co|company|plc|ltd|limited|holdings?|group|the|sa|nv|ag|class\s*[abc]|cl\s*[abc]|cdr|adr)\b/g, '')
-  .replace(/[^a-z0-9]/g, '');
+const NN_SUFFIX = ['incorporated', 'inc', 'corporation', 'corp', 'company', 'plc', 'holdings', 'holding', 'group', 'limited', 'ltd', 'spa', 'sa', 'nv', 'ag', 'ab', 'se', 'asa', 'oyj', 'adr', 'cdr', 'co'];
+function normName(n) { // strip punctuation then iteratively peel corporate suffixes, so "ASML Holding N.V." == "ASML Holding NV"
+  let s = ('' + n).toLowerCase().replace(/&/g, 'and').replace(/\b(class|cl|series|ser)\s*[abc]\b/g, '').replace(/[^a-z0-9]/g, '');
+  let changed = true;
+  while (changed && s.length > 4) { changed = false; for (const suf of NN_SUFFIX) { if (s.endsWith(suf) && s.length - suf.length >= 3) { s = s.slice(0, -suf.length); changed = true; break; } } }
+  return s;
+}
 
 /* ---- helpers ------------------------------------------------------------ */
 const num = x => (x == null || x === '' || isNaN(+x)) ? null : +x;
@@ -125,6 +129,18 @@ const DEAD = [
 const CRYPTO = [
   ['BTC-USD.CC', 'Bitcoin', '₿', '#f7931a'],
   ['ETH-USD.CC', 'Ethereum', 'Ξ', '#7b8cff'],
+];
+
+/* curated NON-US-listed global giants (native listings, prices FX→USD). Anything
+   that already exists as a US ADR is deduped out; build skips codes with no data. */
+const FOREIGN = [
+  '0700.HK', '9988.HK', '3690.HK', '1211.HK', '1810.HK', '600519.SHG', '300750.SHE', '601398.SHG',
+  '7203.TSE', '6758.TSE', '6861.TSE', '8306.TSE', '9984.TSE', '7974.TSE', '8035.TSE', '6098.TSE',
+  'NESN.SW', 'ROG.SW', 'CFR.SW', 'UBSG.SW', 'ZURN.SW',
+  'MC.PA', 'RMS.PA', 'OR.PA', 'SU.PA', 'AIR.PA', 'DG.PA', 'EL.PA',
+  'PRX.AS', 'INGA.AS', 'ADYEN.AS', 'SIE.XETRA', 'ALV.XETRA', 'DTE.XETRA', 'MBG.XETRA', 'RHM.XETRA',
+  'ITX.MC', 'IBE.MC', 'ENEL.MI', 'ISP.MI', 'UCG.MI', '2222.SR',
+  'RELIANCE.NSE', 'TCS.NSE', 'BHARTIARTL.NSE', 'CBA.AU', 'CSL.AU', 'ATCO-A.ST', 'INVE-B.ST', '2317.TW',
 ];
 
 /* Claude's Picks (AI opinion, not advice) — attached to matching stocks */
@@ -178,10 +194,13 @@ async function buildStock(c) {
   if (!f || !f.General) return null;
   const G = f.General, H = f.Highlights || {}, V = f.Valuation || {}, SD = f.SplitsDividends || {};
   if (G.Type !== 'Common Stock') return null;                  // drop preferreds, notes/bonds, ETFs, funds
-  if (G.Exchange && !MAJOR_EXCH.has(G.Exchange)) return null;  // drop OTC / PINK / grey-market listings
+  if (!c.foreign && G.Exchange && !MAJOR_EXCH.has(G.Exchange)) return null;  // drop OTC/PINK/grey (US only)
+  const fx = c.foreign ? await fxToUsd(G.CurrencyCode) : 1;     // foreign reports in local ccy → convert to USD
   let mcapUSD = num(H.MarketCapitalization);
-  if (!mcapUSD && c.mcapUSD) mcapUSD = c.mcapUSD * 1e9;   // fall back to the screener's market cap
+  if (mcapUSD != null) mcapUSD *= fx;
+  else if (!c.foreign && c.mcapUSD) mcapUSD = c.mcapUSD * 1e9;  // fall back to the screener's market cap
   if (!mcapUSD) return null;
+  if (c.foreign && mcapUSD > 4.5e12) return null;              // sanity: no real company > ~$4.5T (drops bad foreign data)
 
   const [eod, divs, splits] = await Promise.all([getJSON(epEOD(c.ticker)), getJSON(epDiv(c.ticker)), getJSON(epSplits(c.ticker))]);
   if (!Array.isArray(eod) || eod.length < 12) return null;
@@ -310,11 +329,11 @@ async function buildStock(c) {
   return {
     id: G.Code, ticker: c.ticker, name: G.Name, exchange: G.Exchange || c.exch,
     country: homeCountry, flag: flagFor(homeCountry), sector: G.Sector || c.sector || 'Other', industry: G.Industry || null,
-    currency: G.CurrencyCode || 'USD', ipoYear: +first.d.slice(0, 4), price: num(last.p), // "since" = first available price
+    currency: 'USD', ipoYear: +first.d.slice(0, 4), price: round(num(last.p) * fx, 2), // prices normalised to USD ("since" = first price)
     mcap: +(mcapUSD / 1e9).toFixed(2),
     m: {
       absGrowth: round(absGrowth), cagr: round(cagr, 1), tsr: round(tsrOk, 1),
-      cumDiv: round(cumDiv, 2), avgYield: round(avgYield, 2), curYield: round(curYield, 2),
+      cumDiv: round(cumDiv * fx, 2), avgYield: round(avgYield, 2), curYield: round(curYield, 2),
       pe: num(V.TrailingPE) || num(H.PERatio), pb: num(V.PriceBookMRQ), ps: num(V.PriceSalesTTM),
       evEbitda: num(V.EnterpriseValueEbitda), peg: num(H.PEGRatio),
       absGrowthTR: round(absGrowthTRok), divCagr: round(divCagr, 1),
@@ -386,6 +405,18 @@ async function buildCrypto([code, name, sym, color]) {
     m: { absGrowth: round((last.p / first.p - 1) * 100), absGrowthTR: round((last.p / first.p - 1) * 100), cagr: round(cagr, 1), tsr: round(cagr, 1), vol: round(sd * Math.sqrt(12) * 100), maxDD: round(mdd * 100), sharpe: sharpe != null ? round(sharpe, 2) : null, ...NUL },
     series: downsampleSeries(px), dec,
   };
+}
+
+const fxCache = {};
+async function fxToUsd(ccy) {
+  if (!ccy || ccy === 'USD') return 1;
+  if (ccy === 'GBX' || ccy === 'GBp') return 0.01 * (await fxToUsd('GBP'));
+  if (ccy === 'ZAc') return 0.01 * (await fxToUsd('ZAR'));
+  if (fxCache[ccy] != null) return fxCache[ccy];
+  const e = await getJSON(`${BASE}/eod/${ccy}USD.FOREX?${tok}&period=m&from=2025-01-01`, { ttlDays: 7 });
+  const r = (Array.isArray(e) && e.length) ? num(e[e.length - 1].close) : null;
+  if (!r) console.warn(`  ! no FX for ${ccy}USD — using 1`);
+  return (fxCache[ccy] = r || 1);
 }
 
 function buildSplitFactors(splits, eod) {
@@ -460,7 +491,16 @@ async function pool(items, worker, n) {
   if (!TICKERS) { const haveT = new Set(shortlist.map(c => c.ticker)); PICK_TICKERS.forEach(t => { if (!haveT.has(t)) shortlist.push({ ticker: t, name: t, exch: (t.split('.')[1] || 'US') }); }); }
   console.log(`Fetching fundamentals + history for ${shortlist.length} candidates…`);
   let stocks = (await pool(shortlist, buildStock, CONCURRENCY)).filter(Boolean);
-  console.log(`\n  built ${stocks.length} stocks`);
+  console.log(`\n  built ${stocks.length} US-listed stocks`);
+  // native foreign giants (prices/mcap FX→USD), deduped against existing ADRs by name
+  if (!TICKERS) {
+    const fCands = FOREIGN.map(t => ({ ticker: t, name: t, exch: t.split('.')[1], foreign: true }));
+    const fBuilt = (await pool(fCands, buildStock, CONCURRENCY)).filter(Boolean);
+    const seen = new Set(stocks.map(s => normName(s.name)));
+    const fNew = fBuilt.filter(s => { const k = normName(s.name); if (seen.has(k)) return false; seen.add(k); return true; });
+    console.log(`  + ${fNew.length} native foreign listings (of ${fBuilt.length} built; rest were ADR dupes)`);
+    stocks.push(...fNew);
+  }
   // global market-cap cut (skip when an explicit ticker list was given)
   stocks.sort((a, b) => b.mcap - a.mcap);
   if (!TICKERS) stocks = stocks.slice(0, LIMIT);
