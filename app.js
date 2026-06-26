@@ -112,6 +112,22 @@ function setLens(id) {
   try { history.replaceState(null, '', `?lens=${id}`); } catch (e) {}
 }
 
+/* clicking the header logo fully returns to the default home view */
+function goHome() {
+  closeDetail();
+  $$('.overlay').forEach(o => o.classList.add('hidden'));
+  const gi = document.getElementById('globeInfo'); if (gi) gi.classList.add('hidden');
+  const sr = document.getElementById('searchResults'); if (sr) { sr.classList.add('hidden'); sr.innerHTML = ''; }
+  const sb = document.getElementById('search'); if (sb) sb.value = '';
+  state = { lens: PERSP[0].id, region: 'All', sector: 'All' };
+  const rs = document.getElementById('regionSel'); if (rs) rs.value = 'All';
+  const ss = document.getElementById('sectorSel'); if (ss) ss.value = 'All';
+  $$('.lens').forEach(b => b.classList.toggle('on', b.dataset.id === PERSP[0].id));
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 /* ----------------------------- filters ----------------------------------- */
 function buildFilters() {
   const regions = ['All', ...Array.from(new Set(STOCKS.map(s => s.country))).sort()];
@@ -443,7 +459,7 @@ function setupOverlays() {
   $('#scrim').onclick = closeDetail;
   $('#timeMachineBtn').onclick = () => openTM();
   $('#welStart').onclick = () => hide('#welcomeOverlay');
-  $('#brandHome').onclick = () => { setLens(PERSP[0].id); $('#regionSel').value = 'All'; $('#sectorSel').value = 'All'; state.region = state.sector = 'All'; render(); };
+  $('#brandHome').onclick = goHome;
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeDetail(); $$('.overlay').forEach(o => o.classList.add('hidden')); } });
 
   // about lenses list + data overlay body
