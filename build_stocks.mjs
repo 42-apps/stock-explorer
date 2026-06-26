@@ -224,25 +224,75 @@ async function buildStock(c) {
     if (seg.length >= 6) { const a0 = seg[0].adj || seg[0].p, a1 = seg[seg.length - 1].adj || seg[seg.length - 1].p; if (a0 > 0) dec[ds + 's'] = round((a1 / a0 - 1) * 100); }
   }
 
+  // --- extra metrics: all from cached fundamentals/history, no new API calls ---
+  const Fin = f.Financials || {}, Tech = f.Technicals || {};
+  const cf = latestFin(Fin.Cash_Flow);
+  const absGrowthTR = cleanHist ? ((last.adj || last.p) / (first.adj || first.p) - 1) * 100 : null; // dividends-reinvested
+  const downside = Math.sqrt(rets.filter(x => x < 0).reduce((a, b) => a + b * b, 0) / (rets.length || 1));
+  const sortino = (downside && cleanHist) ? (mean * 12 - 0.03) / (downside * Math.sqrt(12)) : null;
+  const calmar = (cleanHist && maxDD < 0) ? (cagr / 100) / Math.abs(maxDD) : null;
+  let pk = -1e9, uw = 0, uwMax = 0;                                  // longest stretch underwater (months)
+  adj.forEach(v => { if (v >= pk) { pk = v; uw = 0; } else { uw++; if (uw > uwMax) uwMax = uw; } });
+  const ser = downsampleSeries(px) || [];
+  let downYears = null; // only meaningful with a long record, else recent IPOs win trivially
+  if (ser.length >= 15) { downYears = 0; for (let i = 1; i < ser.length; i++) if (ser[i][1] < ser[i - 1][1]) downYears++; }
+  const splitCount = Array.isArray(splits) ? splits.length : 0;
+  const splitMult = (Array.isArray(splits) ? splits : []).reduce((a, s) => { const r = parseSplit(s.split); return r ? a * r : a; }, 1);
+  let divCagr = null;
+  if (divYears.length >= 6) {
+    const fy = divYears[1], ly = divYears[divYears.length - 1]; // skip the (often partial) first dividend year
+    if (byYear[fy] > 0 && ly > fy) { const g = (Math.pow(byYear[ly] / byYear[fy], 1 / (ly - fy)) - 1) * 100; if (g <= 60 && g >= -50) divCagr = g; }
+  }
+  // statements are in the filing currency (Cash_Flow.currency_symbol) but mcap is
+  // USD, so $-ratios are only valid for USD filers; null the rest until FX lands.
+  const cfCcy = (Fin.Cash_Flow && Fin.Cash_Flow.currency_symbol) || 'USD';
+  const fcf = cf ? finNum(cf.freeCashFlow) : null;
+  let fcfYield = (cfCcy === 'USD' && fcf != null && mcapUSD) ? fcf / mcapUSD * 100 : null;
+  const divPaid = cf ? Math.abs(finNum(cf.dividendsPaid) || 0) : 0;
+  const buyback = cf ? Math.max(0, -(finNum(cf.salePurchaseOfStock) || 0)) : 0;
+  let shYield = (cfCcy === 'USD' && mcapUSD) ? (divPaid + buyback) / mcapUSD * 100 : null;
+  if (fcfYield != null && (fcfYield > 60 || fcfYield < -60)) fcfYield = null; // backstop
+  if (shYield != null && (shYield < 0 || shYield > 60)) shYield = null;
+  let revCagr = finCagr(Fin.Income_Statement, 'totalRevenue', 10);
+  if (revCagr != null && (revCagr > 100 || revCagr < -60)) revCagr = null; // tiny-base / distressed artifacts
+  const rule40 = (revCagr != null && num(H.ProfitMargin) != null) ? revCagr + num(H.ProfitMargin) * 100 : null;
+  const beta = finNum(Tech.Beta);
+  const hi52 = finNum(Tech['52WeekHigh']), lo52 = finNum(Tech['52WeekLow']);
+  const range52 = (hi52 && lo52 && hi52 > lo52) ? (num(last.p) - lo52) / (hi52 - lo52) * 100 : null;
+  const apprec = cleanHist ? Math.max(0.03, Math.min(1, 1 - first.p / last.p)) : 0.5; // share of cap that is appreciation
+  const wealthCreated = +((mcapUSD / 1e9) * apprec).toFixed(0);      // improved "wealth created" proxy (was raw mcap)
+  // EODHD's adjusted_close is corrupted by some mid-history merger/spinoff splices,
+  // inflating total-return absurdly (e.g. JCI 47M%). Null TR fields past a ceiling
+  // no real name here reaches (Altria, the legit max, is ~2.65M%).
+  const trArtifact = absGrowthTR != null && absGrowthTR > 5000000;
+  const absGrowthTRok = trArtifact ? null : absGrowthTR;
+  const tsrOk = trArtifact ? null : tsr;
+  // Phoenix: huge total return DESPITE a brutal (≥60%) crash along the way
+  const phoenix = (cleanHist && !trArtifact && maxDD <= -0.6 && absGrowthTRok > 0) ? round(absGrowthTRok) : null;
+
   return {
     id: G.Code, ticker: c.ticker, name: G.Name, exchange: G.Exchange || c.exch,
-    country: homeCountry, flag: flagFor(homeCountry), sector: G.Sector || c.sector || 'Other',
+    country: homeCountry, flag: flagFor(homeCountry), sector: G.Sector || c.sector || 'Other', industry: G.Industry || null,
     currency: G.CurrencyCode || 'USD', ipoYear: +first.d.slice(0, 4), price: num(last.p), // "since" = first available price
     mcap: +(mcapUSD / 1e9).toFixed(2),
     m: {
-      absGrowth: round(absGrowth), cagr: round(cagr, 1), tsr: round(tsr, 1),
+      absGrowth: round(absGrowth), cagr: round(cagr, 1), tsr: round(tsrOk, 1),
       cumDiv: round(cumDiv, 2), avgYield: round(avgYield, 2), curYield: round(curYield, 2),
       pe: num(V.TrailingPE) || num(H.PERatio), pb: num(V.PriceBookMRQ), ps: num(V.PriceSalesTTM),
       evEbitda: num(V.EnterpriseValueEbitda), peg: num(H.PEGRatio),
-      sharpe: sharpe != null ? round(sharpe, 2) : null, vol: round(vol), maxDD: round(maxDD * 100),
+      absGrowthTR: round(absGrowthTRok), divCagr: round(divCagr, 1),
+      sharpe: sharpe != null ? round(sharpe, 2) : null, sortino: round(sortino, 2), calmar: round(calmar, 2),
+      vol: round(vol), maxDD: round(maxDD * 100), beta: round(beta, 2), downYears, underwaterMonths: uwMax,
+      splitCount, splitMult: round(splitMult, 1), phoenix,
       divStreak,
       roe: num(H.ReturnOnEquityTTM) != null ? round(num(H.ReturnOnEquityTTM) * 100) : null,
       roic: num(H.ReturnOnAssetsTTM) != null ? round(num(H.ReturnOnAssetsTTM) * 100) : null,
       grossMargin: (num(H.GrossProfitTTM) != null && num(H.RevenueTTM)) ? round(num(H.GrossProfitTTM) / num(H.RevenueTTM) * 100) : null,
       netMargin: num(H.ProfitMargin) != null ? round(num(H.ProfitMargin) * 100) : null,
-      wealthUSD: +(mcapUSD / 1e9).toFixed(0), // proxy: present shareholder value; refined later
+      fcfYield: round(fcfYield, 1), shYield: round(shYield, 1), revCagr: round(revCagr, 1), rule40: round(rule40), range52: round(range52),
+      wealthUSD: wealthCreated, // appreciation-weighted proxy of lifetime wealth created (was raw mcap)
       ret1y: round(r1, 1),
-      valueScore: null, qualityScore: null, // filled cross-sectionally below
+      valueScore: null, qualityScore: null, alphaSpy: null, // filled cross-sectionally below
     },
     series: downsampleSeries(px), dec,
   };
@@ -275,15 +325,28 @@ function downsampleSeries(px) {
   return years.map(y => [y, +(100 * byYear[y] / base).toFixed(2)]);
 }
 const round = (x, d = 0) => x == null || isNaN(x) ? null : +(+x).toFixed(d);
+const finNum = x => { const n = parseFloat(x); return isFinite(n) ? n : null; };
+function latestFin(section) { const y = section && section.yearly; if (!y) return null; const ks = Object.keys(y).sort(); return ks.length ? y[ks[ks.length - 1]] : null; }
+function finCagr(section, field, maxYrs = 10) {
+  const y = section && section.yearly; if (!y) return null;
+  const ks = Object.keys(y).sort(); if (ks.length < 6) return null;
+  const si = Math.max(0, ks.length - 1 - maxYrs), n = ks.length - 1 - si;
+  const v0 = finNum(y[ks[si]][field]), v1 = finNum(y[ks[ks.length - 1]][field]);
+  return (v0 && v1 && v0 > 0 && n >= 2) ? (Math.pow(v1 / v0, 1 / n) - 1) * 100 : null;
+}
 
 /* ---- 4. cross-sectional composites ------------------------------------- */
 function addComposites(stocks) {
-  const inv = v => v == null ? null : v; // higher multiple = richer
-  const pe = stocks.map(s => s.m.pe), pb = stocks.map(s => s.m.pb), ps = stocks.map(s => s.m.ps), ev = stocks.map(s => s.m.evEbitda), peg = stocks.map(s => s.m.peg);
   const roic = stocks.map(s => s.m.roic), nm = stocks.map(s => s.m.netMargin), gm = stocks.map(s => s.m.grossMargin), shp = stocks.map(s => s.m.sharpe);
+  const bySector = {}; stocks.forEach(s => (bySector[s.sector] ||= []).push(s));
   stocks.forEach(s => {
-    const vparts = [pctRank(pe, s.m.pe), pctRank(pb, s.m.pb), pctRank(ps, s.m.ps), pctRank(ev, s.m.evEbitda), pctRank(peg, s.m.peg)].filter(x => x != null);
+    // valuation ranked WITHIN sector — so "undervalued" isn't just a list of
+    // structurally low-multiple sectors (banks/energy) vs high ones (tech).
+    const peers = bySector[s.sector];
+    const vr = field => pctRank(peers.map(x => x.m[field]), s.m[field]);
+    const vparts = [vr('pe'), vr('pb'), vr('ps'), vr('evEbitda'), vr('peg')].filter(x => x != null);
     s.m.valueScore = vparts.length ? Math.round(vparts.reduce((a, b) => a + b, 0) / vparts.length) : 50;
+    // quality ranked across the whole universe
     const qparts = [pctRank(roic, s.m.roic), pctRank(nm, s.m.netMargin), pctRank(gm, s.m.grossMargin), pctRank(shp, s.m.sharpe)].filter(x => x != null);
     s.m.qualityScore = qparts.length ? Math.round(qparts.reduce((a, b) => a + b, 0) / qparts.length) : 50;
   });
@@ -312,8 +375,34 @@ async function pool(items, worker, n) {
   if (!TICKERS) stocks = stocks.slice(0, LIMIT);
   addComposites(stocks);
 
+  // benchmarks: SPY/QQQ for "did it beat the market?" + per-stock lifetime alpha
+  const bench = {};
+  for (const b of ['SPY', 'QQQ']) {
+    const e = await getJSON(epEOD(b + '.US'));
+    if (!Array.isArray(e)) continue;
+    const byY = {}; e.forEach(r => { const y = +r.date.slice(0, 4), v = num(r.adjusted_close); if (v) byY[y] = v; });
+    const ys = Object.keys(byY).map(Number).sort((a, b) => a - b);
+    if (ys.length > 1) bench[b] = { from: ys[0], cagr: round((Math.pow(byY[ys[ys.length - 1]] / byY[ys[0]], 1 / (ys[ys.length - 1] - ys[0])) - 1) * 100, 1), byY };
+  }
+  if (bench.SPY) {
+    const spy = bench.SPY.byY, ys = Object.keys(spy).map(Number).sort((a, b) => a - b), last = ys[ys.length - 1];
+    stocks.forEach(s => {
+      if (s.m.tsr == null) return;
+      const y0 = spy[s.ipoYear] || spy[ys.find(y => y >= s.ipoYear)];
+      if (!y0) return;
+      const n = Math.max(last - Math.max(s.ipoYear, ys[0]), 1);
+      s.m.alphaSpy = round(s.m.tsr - (Math.pow(spy[last] / y0, 1 / n) - 1) * 100, 1);
+    });
+  }
+  console.log(`  benchmarks: SPY ${bench.SPY ? bench.SPY.cagr + '%/yr' : 'n/a'}, QQQ ${bench.QQQ ? bench.QQQ.cagr + '%/yr' : 'n/a'}`);
+
   const out = {
-    meta: { asOf: new Date().toISOString().slice(0, 10), source: 'EODHD All-In-One', universe: `Global equities · ${EXCHANGES.join(', ')}`, count: stocks.length, currency: 'USD (market cap normalised)', sample: false },
+    meta: {
+      asOf: new Date().toISOString().slice(0, 10), source: 'EODHD All-In-One',
+      universe: `Global equities · US-listed (incl. ADRs) · ${stocks.length} companies`,
+      count: stocks.length, currency: 'USD', sample: false,
+      benchmarks: { SPY: bench.SPY && { from: bench.SPY.from, cagr: bench.SPY.cagr }, QQQ: bench.QQQ && { from: bench.QQQ.from, cagr: bench.QQQ.cagr } },
+    },
     perspectives: SAMPLE_PERSPECTIVES(),
     stocks,
   };

@@ -12,5 +12,18 @@
   { "id": "sharpe",           "group": "Quality",   "emoji": "🛡️", "label": "Best risk-adjusted",        "blurb": "Highest return per unit of volatility (Sharpe ratio) — the 'sleep at night' winners.", "field": "sharpe", "unit": "", "dir": "desc" },
   { "id": "wealth",           "group": "Impact",    "emoji": "🌍", "label": "Wealth creators",           "blurb": "Total shareholder wealth created over the company's life (Bessembinder-style).", "field": "wealthUSD", "unit": "$B", "dir": "desc" },
   { "id": "momentum",         "group": "Impact",    "emoji": "🔥", "label": "What's hot now",            "blurb": "Trailing 12-month total return — this year's momentum.", "field": "ret1y", "unit": "%", "dir": "desc" },
-  { "id": "hall-of-shame",    "group": "Impact",    "emoji": "💀", "label": "Hall of shame",             "blurb": "The biggest value destroyers in the universe — worst long-run returns.", "field": "absGrowth", "unit": "%", "dir": "asc" }
+  { "id": "hall-of-shame",    "group": "Impact",    "emoji": "💀", "label": "Hall of shame",             "blurb": "The biggest value destroyers in the universe — worst long-run returns.", "field": "absGrowth", "unit": "%", "dir": "asc" },
+
+  { "id": "div-growth",       "group": "Dividends", "emoji": "🌱", "label": "Fastest dividend growth",    "blurb": "Highest annual growth rate of the dividend itself — the fast raise-givers the streak board hides.", "field": "divCagr", "unit": "%/yr", "dir": "desc" },
+
+  { "id": "sortino",          "group": "Quality",   "emoji": "🎯", "label": "Best Sortino",              "blurb": "Return per unit of DOWNSIDE volatility — a Sharpe that only punishes losses, not upside swings.", "field": "sortino", "unit": "", "dir": "desc" },
+  { "id": "calmar",           "group": "Quality",   "emoji": "⛰️", "label": "Best Calmar",               "blurb": "Annual return per unit of worst drawdown — reward earned for the deepest pain endured.", "field": "calmar", "unit": "", "dir": "desc" },
+  { "id": "low-beta",         "group": "Quality",   "emoji": "🪶", "label": "Calmest (low beta)",        "blurb": "Least jumpy relative to the market — moves a fraction as much as the index.", "field": "beta", "unit": "", "dir": "asc" },
+
+  { "id": "low-vol",          "group": "Resilience", "emoji": "🧊", "label": "Steadiest (low volatility)", "blurb": "Smallest swings — the calm counterpoint to the moonshots.", "field": "vol", "unit": "%", "dir": "asc" },
+  { "id": "fewest-down",      "group": "Resilience", "emoji": "😴", "label": "Fewest down years",          "blurb": "Long-history stocks that almost never had a losing year — sleep-at-night compounders (15yr+).", "field": "downYears", "unit": "int", "dir": "asc" },
+  { "id": "underwater",       "group": "Resilience", "emoji": "🌊", "label": "Longest underwater",         "blurb": "Most months stuck below a prior peak — the patience test even great stocks put you through.", "field": "underwaterMonths", "unit": "mo", "dir": "desc" },
+
+  { "id": "index-beaters",    "group": "Impact",    "emoji": "🥊", "label": "Beat the market most",       "blurb": "Biggest annual outperformance vs the S&P 500 over the company's lifetime.", "field": "alphaSpy", "unit": "%/yr", "dir": "desc" },
+  { "id": "most-split",       "group": "Impact",    "emoji": "🪓", "label": "Most-split stocks",          "blurb": "Biggest cumulative split multiple — how many of today's shares one early share became.", "field": "splitMult", "unit": "x", "dir": "desc" }
 ]

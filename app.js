@@ -46,8 +46,11 @@ function fmtVal(v, p) {
   else if (u === '$') { core = '$' + a.toFixed(a < 10 ? 2 : 0); }
   else if (u === '$B') { core = a >= 1000 ? '$' + (a / 1000).toFixed(1).replace(/\.0$/, '') + 'T' : '$' + commas(a) + 'B'; }
   else if (u === 'yrs') { core = commas(a); small = 'yr'; }
+  else if (u === 'mo') { core = commas(a); small = 'mo'; }
+  else if (u === 'x') { core = a >= 100 ? commas(a) : a.toFixed(1).replace(/\.0$/, ''); small = '×'; }
+  else if (u === 'int') { core = commas(a); }
   else if (u === 'score') { core = a.toFixed(0); }
-  else { core = a.toFixed(2); } // sharpe etc.
+  else { core = a.toFixed(2); } // sharpe/sortino/calmar/beta etc.
   return (neg ? '−' : '') + core + (small ? `<small>${small}</small>` : '');
 }
 
@@ -293,14 +296,14 @@ function openDetail(id) {
        <span class="d-chip">Mcap $${s.mcap >= 1000 ? (s.mcap/1000).toFixed(2)+'T' : s.mcap+'B'}</span>
      </div>
      <div class="d-curve">${growthCurveSVG(s)}
-       <div class="cap"><span>$100 in ${s.ipoYear}</span><span>→ <b>${tmValueStr(s, s.ipoYear)}</b> today</span></div>
+       <div class="cap"><span>$100 in ${s.ipoYear} · dividends reinvested</span><span>→ <b>${tmValueStr(s, s.ipoYear)}</b> today</span></div>
      </div>
      <div class="d-sec-h">Growth</div>
      <div class="d-grid">
-       ${cell('Total return', grow, m.absGrowth >= 0 ? 'pos' : 'neg')}
+       ${cell('Price return', grow, m.absGrowth >= 0 ? 'pos' : 'neg')}
+       ${cell('With dividends', pctBig(m.absGrowthTR), (m.absGrowthTR || 0) >= 0 ? 'pos' : 'neg')}
        ${cell('Annual (CAGR)', pct(m.cagr), m.cagr >= 0 ? 'pos' : 'neg')}
        ${cell('Total return /yr', pct(m.tsr), m.tsr >= 0 ? 'pos' : 'neg')}
-       ${cell('1-yr return', pct(m.ret1y), m.ret1y >= 0 ? 'pos' : 'neg')}
      </div>
      <div class="d-sec-h">Dividends</div>
      <div class="d-grid">
