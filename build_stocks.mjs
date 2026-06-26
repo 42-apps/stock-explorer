@@ -101,6 +101,26 @@ const MAJOR_EXCH = new Set(['NYSE', 'NASDAQ', 'NYSE ARCA', 'NYSE MKT', 'NYSE Ame
 const MIN_GROWTH_YRS = 10;  // "all-time" growth needs a real, decade-plus track record
 const BASE_FLOOR = 0.02;    // reject sub-penny historical bases (corrupted split/denomination splices)
 
+/* curated famous failures (delisted/bankrupt) for the Graveyard / Hall of Shame.
+   [EODHD code, name, sector, country, delisting year]. buildDead() skips any whose
+   price history doesn't come back, so over-inclusion is safe. */
+const DEAD = [
+  ['ENRNQ', 'Enron', 'Energy', 'USA', 2004], ['MCWEQ', 'WorldCom', 'Communication Services', 'USA', 2002],
+  ['LEH', 'Lehman Brothers', 'Financial Services', 'USA', 2008], ['WAMUQ', 'Washington Mutual', 'Financial Services', 'USA', 2008],
+  ['BSC_old', 'Bear Stearns', 'Financial Services', 'USA', 2008], ['CFC', 'Countrywide Financial', 'Financial Services', 'USA', 2008],
+  ['WB_old2', 'Wachovia', 'Financial Services', 'USA', 2008], ['CNCEQ', 'Conseco', 'Financial Services', 'USA', 2002],
+  ['SIVB', 'SVB Financial (Silicon Valley Bank)', 'Financial Services', 'USA', 2023], ['FRC', 'First Republic Bank', 'Financial Services', 'USA', 2023],
+  ['CCTYQ', 'Circuit City', 'Consumer Cyclical', 'USA', 2009], ['RSH', 'RadioShack', 'Consumer Cyclical', 'USA', 2015],
+  ['SHLD_old', 'Sears Holdings', 'Consumer Cyclical', 'USA', 2018], ['JCP', 'J.C. Penney', 'Consumer Cyclical', 'USA', 2020],
+  ['BBBY_old', 'Bed Bath & Beyond', 'Consumer Cyclical', 'USA', 2023], ['GM_old', 'General Motors (old)', 'Consumer Cyclical', 'USA', 2009],
+  ['NRTLQ', 'Nortel Networks', 'Technology', 'Canada', 2009], ['GLBC', 'Global Crossing', 'Communication Services', 'USA', 2002],
+  ['WBVN', 'Webvan', 'Consumer Cyclical', 'USA', 2001], ['PRD', 'Polaroid', 'Technology', 'USA', 2001],
+  ['EKDKQ', 'Eastman Kodak (old)', 'Technology', 'USA', 2012], ['ALU', 'Alcatel-Lucent', 'Technology', 'France', 2016],
+  ['SUNEQ', 'SunEdison', 'Energy', 'USA', 2016], ['BTU_old', 'Peabody Energy (old)', 'Energy', 'USA', 2016],
+  ['VRX', 'Valeant Pharmaceuticals', 'Healthcare', 'USA', 2018], ['WE', 'WeWork', 'Real Estate', 'USA', 2023],
+  ['JAVA_old', 'Sun Microsystems', 'Technology', 'USA', 2010],
+];
+
 /* ---- 1. universe selection --------------------------------------------- */
 async function pickUniverse() {
   // The screener caps offset at ~1000, so to reach deeper than the mega-caps we
@@ -298,6 +318,34 @@ async function buildStock(c) {
   };
 }
 
+async function buildDead([code, name, sector, country, year]) {
+  const eod = await getJSON(epEOD(code + '.US'));
+  if (!Array.isArray(eod)) return null;
+  const px = eod.map(r => ({ d: r.date, p: num(r.close), adj: num(r.adjusted_close) || num(r.close) })).filter(r => r.p > 0);
+  if (px.length < 12) return null;
+  const first = px[0], last = px[px.length - 1];
+  let peak = px[0]; px.forEach(r => { if (r.p > peak.p) peak = r; });
+  if (last.p / peak.p - 1 > -0.6) return null; // require a genuine ≥60% collapse (drops names with incomplete EODHD history)
+  const yrs = Math.max(yearsBetween(first.d, last.d), 0.5);
+  const adj = px.map(r => r.adj), rets = []; for (let i = 1; i < adj.length; i++) rets.push(adj[i] / adj[i - 1] - 1);
+  const mean = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
+  const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length || 1));
+  let pk = -1e9, mdd = 0; adj.forEach(v => { pk = Math.max(pk, v); mdd = Math.min(mdd, v / pk - 1); });
+  const NUL = { tsr: null, divCagr: null, pe: null, pb: null, ps: null, evEbitda: null, peg: null, valueScore: null, qualityScore: null, sharpe: null, sortino: null, calmar: null, beta: null, downYears: null, underwaterMonths: null, phoenix: null, roe: null, roic: null, grossMargin: null, netMargin: null, fcfYield: null, shYield: null, revCagr: null, rule40: null, range52: null, wealthUSD: null, ret1y: null, alphaSpy: null };
+  return {
+    id: code, ticker: code + '.US', name, exchange: 'delisted', country, flag: flagFor(country), sector, industry: null,
+    currency: 'USD', ipoYear: +first.d.slice(0, 4), price: round(last.p, 2), mcap: null,
+    delisted: true, delistYear: year, peakPrice: round(peak.p, 2), peakYear: +peak.d.slice(0, 4), peakDrop: round((last.p / peak.p - 1) * 100),
+    m: {
+      absGrowth: round((last.p / first.p - 1) * 100), absGrowthTR: round((last.p / first.p - 1) * 100),
+      cagr: round((Math.pow(Math.max(last.p / first.p, 1e-9), 1 / yrs) - 1) * 100, 1),
+      cumDiv: 0, avgYield: 0, curYield: 0, divStreak: 0, splitCount: 0, splitMult: 1,
+      vol: round(sd * Math.sqrt(12) * 100), maxDD: round(mdd * 100), ...NUL,
+    },
+    series: downsampleSeries(px), dec: {},
+  };
+}
+
 function buildSplitFactors(splits, eod) {
   // returns map date→cumulative factor so close*factor is split-adjusted to "today"
   const f = {}; eod.forEach(r => f[r.date] = 1);
@@ -395,6 +443,11 @@ async function pool(items, worker, n) {
     });
   }
   console.log(`  benchmarks: SPY ${bench.SPY ? bench.SPY.cagr + '%/yr' : 'n/a'}, QQQ ${bench.QQQ ? bench.QQQ.cagr + '%/yr' : 'n/a'}`);
+
+  // famous failures (delisted/bankrupt) — the Graveyard / real Hall of Shame
+  const dead = (await pool(DEAD, buildDead, CONCURRENCY)).filter(Boolean);
+  console.log(`  + ${dead.length} delisted/dead companies`);
+  stocks.push(...dead);
 
   const out = {
     meta: {

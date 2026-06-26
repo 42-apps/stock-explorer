@@ -12,6 +12,7 @@ const PERSP = (() => {
   const extra = [
     { id: 'decade', group: 'Impact', emoji: '🏆', label: 'Champions by decade', blurb: 'The best-performing stock of each decade by total return — a fair fight within each era, where raw all-time growth always favours the oldest names.', custom: true },
     { id: 'globe', group: 'Impact', emoji: '🌐', label: 'Around the world', blurb: 'Every company on its home turf — bubble size = combined market cap of that country\'s giants. Spin the globe; click a country to see its companies.', custom: true },
+    { id: 'graveyard', group: 'Impact', emoji: '🪦', label: 'The graveyard', blurb: 'Famous fortunes destroyed — giants that fell to near-zero and were delisted. The cautionary tales every "greatest stocks" list forgets.', custom: true },
   ];
   extra.forEach(e => { if (!base.find(p => p.id === e.id)) base.push(e); });
   return base;
@@ -151,6 +152,7 @@ function render() {
   $('#podium').style.display = p.custom ? 'none' : '';
   $('#leaderboard').style.display = isGlobe ? 'none' : '';
   if (p.id === 'decade') { $('#podium').innerHTML = ''; return renderDecade(); }
+  if (p.id === 'graveyard') { $('#podium').innerHTML = ''; $('#bhCount').textContent = ''; return renderGraveyard(); }
   if (isGlobe) { $('#bhCount').textContent = ''; return renderGlobe(); }
 
   const list = ranked();
@@ -190,6 +192,28 @@ function renderDecade() {
   lb.querySelectorAll('[data-id]').forEach(e => e.onclick = () => openDetail(e.dataset.id));
 }
 
+/* ----------------------------- the graveyard ----------------------------- */
+function renderGraveyard() {
+  const lb = $('#leaderboard'); lb.innerHTML = '';
+  const dead = STOCKS.filter(s => s.delisted).sort((a, b) => b.peakPrice - a.peakPrice);
+  lb.appendChild(el('p', 'gy-intro', `${dead.length} famous fortunes destroyed — the cautionary tales every "greatest stocks" list forgets. <b>$10,000</b> invested at each peak → what was left when the music stopped.`));
+  const grid = el('div', 'gy-grid');
+  dead.forEach(s => {
+    const left = Math.max(0, 10000 * (s.price / s.peakPrice));
+    const card = el('div', 'gy-card'); card.dataset.id = s.id;
+    card.innerHTML =
+      `<div class="gy-top"><span class="gy-stone">🪦</span><span class="gy-yrs">${s.peakYear}–${s.delistYear}</span></div>
+       <div class="gy-nm">${s.flag} ${esc(s.name)}</div>
+       <div class="gy-sub">${esc(s.sector)}</div>
+       <div class="gy-drop">${s.peakDrop}%</div>
+       <div class="gy-cash">$10,000 → <b>${left >= 1 ? '$' + commas(left) : '$' + left.toFixed(2)}</b></div>
+       <div class="gy-peak">peaked $${commas(s.peakPrice)} in ${s.peakYear}</div>`;
+    grid.appendChild(card);
+  });
+  lb.appendChild(grid);
+  lb.querySelectorAll('[data-id]').forEach(e => e.onclick = () => openDetail(e.dataset.id));
+}
+
 /* ----------------------------- around the world (globe) ------------------ */
 let _globe = null, _globePosed = false;
 const mcStr = m => '$' + (m >= 1000 ? (m / 1000).toFixed(1) + 'T' : Math.round(m) + 'B');
@@ -199,7 +223,7 @@ function renderGlobe() {
   // aggregate companies by home country
   const byC = {};
   STOCKS.forEach(s => {
-    const g = GEO[s.country]; if (!g) return;
+    const g = GEO[s.country]; if (!g || s.delisted) return; // graveyard names have no live market cap
     const e = (byC[s.country] ||= { country: s.country, flag: s.flag, lat: g.lat, lng: g.lon, region: g.region, count: 0, mcap: 0, list: [] });
     e.count++; e.mcap += s.mcap || 0; e.list.push(s);
   });
@@ -259,7 +283,7 @@ function renderPodium(list, p) {
     card.innerHTML =
       `<div class="pod-medal">${['🥇','🥈','🥉'][i]}</div>
        <div class="pod-rank">#${i + 1} · ${esc(p.label)}</div>
-       <div class="pod-name"><span class="pod-flag">${s.flag}</span>${esc(s.name)}${dividBadge(s)}</div>
+       <div class="pod-name"><span class="pod-flag">${s.flag}</span>${esc(s.name)}${dividBadge(s)}${deadBadge(s)}</div>
        <div class="pod-tk">${esc(s.ticker)} · ${esc(s.sector)} · ${esc(s.country)}</div>
        <div class="pod-val">${fmtVal(v, p)}</div>
        <div class="pod-sub">${esc(subStat(s, p))}</div>`;
@@ -274,6 +298,7 @@ function dividBadge(s) {
   if (d >= 25) return `<span class="badge aris">Aristocrat</span>`;
   return '';
 }
+function deadBadge(s) { return s.delisted ? `<span class="badge dead">💀 ${s.delistYear}</span>` : ''; }
 
 function renderBoard(list, p, fracs) {
   const lb = $('#leaderboard'); lb.innerHTML = '';
@@ -284,7 +309,7 @@ function renderBoard(list, p, fracs) {
     row.innerHTML =
       `<div class="lb-rank">${i + 1}</div>
        <div class="lb-id">
-         <div class="lb-nm"><span class="f">${s.flag}</span><span class="nm">${esc(s.name)}</span>${dividBadge(s)}</div>
+         <div class="lb-nm"><span class="f">${s.flag}</span><span class="nm">${esc(s.name)}</span>${dividBadge(s)}${deadBadge(s)}</div>
          <div class="lb-meta"><span class="tk">${esc(s.ticker)}</span> · ${esc(s.sector)} · ${esc(subStat(s, p))}</div>
        </div>
        <div class="lb-bar"><div class="lb-bar-fill ${neg ? 'neg' : ''}" style="width:${(fracs[i] * 100).toFixed(1)}%"></div></div>
@@ -304,8 +329,9 @@ function openDetail(id) {
 
   $('#detailBody').innerHTML =
     `<div class="d-flag">${s.flag}</div>
-     <div class="d-name">${esc(s.name)} ${dividBadge(s)}</div>
+     <div class="d-name">${esc(s.name)} ${dividBadge(s)}${deadBadge(s)}</div>
      <div class="d-sub">${esc(s.ticker)} · ${esc(s.exchange)} · listed ${s.ipoYear} · ${esc(s.country)}</div>
+     ${s.delisted ? `<div class="d-dead">🪦 Delisted ${s.delistYear} · peaked $${s.peakPrice} in ${s.peakYear} · <b>${s.peakDrop}%</b> from peak</div>` : ''}
      <div class="d-chips">
        <span class="d-chip">${esc(s.sector)}</span>
        <span class="d-chip">Price ${s.currency} ${s.price}</span>
