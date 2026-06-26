@@ -230,7 +230,11 @@ async function buildStock(c) {
 
   // split-adjusted price series (price-only) + adjusted_close (total return)
   const splitFactor = buildSplitFactors(splits, series);
-  const px = series.map(r => ({ d: r.date, p: num(r.close) * (splitFactor[r.date] || 1), adj: num(r.adjusted_close) || num(r.close) })).filter(r => r.p);
+  // for foreign listings, convert the whole price series to USD using HISTORICAL FX,
+  // so growth/CAGR/TSR reflect a USD investor's return (incl. currency drift), not just local price moves
+  const fxs = c.foreign ? await fxSeries(G.CurrencyCode) : null;
+  const fxAt = d => c.foreign ? ((fxs && fxs[d.slice(0, 7)]) || fx) : 1;
+  const px = series.map(r => { const f = fxAt(r.date); return { d: r.date, p: num(r.close) * (splitFactor[r.date] || 1) * f, adj: (num(r.adjusted_close) || num(r.close)) * f }; }).filter(r => r.p);
   const first = px[0], last = px[px.length - 1];
   const yrs = Math.max(yearsBetween(first.d, last.d), 0.5);
   // all-time growth metrics are only meaningful with a long, clean history —
@@ -285,7 +289,9 @@ async function buildStock(c) {
   const cf = latestFin(Fin.Cash_Flow);
   const absGrowthTR = cleanHist ? ((last.adj || last.p) / (first.adj || first.p) - 1) * 100 : null; // dividends-reinvested
   const downside = Math.sqrt(rets.filter(x => x < 0).reduce((a, b) => a + b * b, 0) / (rets.length || 1));
-  const sortino = (downside && cleanHist) ? (mean * 12 - 0.03) / (downside * Math.sqrt(12)) : null;
+  const downCount = rets.filter(x => x < 0).length;
+  let sortino = (downside && cleanHist && downCount >= 12) ? (mean * 12 - 0.03) / (downside * Math.sqrt(12)) : null;
+  if (sortino != null && (sortino > 8 || sortino < -3)) sortino = null; // tiny-downside-denominator artifacts
   const calmar = (cleanHist && maxDD < 0) ? (cagr / 100) / Math.abs(maxDD) : null;
   let pk = -1e9, uw = 0, uwMax = 0;                                  // longest stretch underwater (months)
   adj.forEach(v => { if (v >= pk) { pk = v; uw = 0; } else { uw++; if (uw > uwMax) uwMax = uw; } });
@@ -312,7 +318,7 @@ async function buildStock(c) {
   let revCagr = finCagr(Fin.Income_Statement, 'totalRevenue', 10);
   if (revCagr != null && (revCagr > 100 || revCagr < -60)) revCagr = null; // tiny-base / distressed artifacts
   const rule40 = (revCagr != null && num(H.ProfitMargin) != null) ? revCagr + num(H.ProfitMargin) * 100 : null;
-  const beta = finNum(Tech.Beta);
+  let beta = finNum(Tech.Beta); if (beta != null && (beta < 0.05 || beta > 4)) beta = null; // drop negative/noise-beta artifacts
   const hi52 = finNum(Tech['52WeekHigh']), lo52 = finNum(Tech['52WeekLow']);
   const range52 = (hi52 && lo52 && hi52 > lo52) ? (num(last.p) - lo52) / (hi52 - lo52) * 100 : null;
   const apprec = cleanHist ? Math.max(0.03, Math.min(1, 1 - first.p / last.p)) : 0.5; // share of cap that is appreciation
@@ -329,7 +335,7 @@ async function buildStock(c) {
   return {
     id: G.Code, ticker: c.ticker, name: G.Name, exchange: G.Exchange || c.exch,
     country: homeCountry, flag: flagFor(homeCountry), sector: G.Sector || c.sector || 'Other', industry: G.Industry || null,
-    currency: 'USD', ipoYear: +first.d.slice(0, 4), price: round(num(last.p) * fx, 2), // prices normalised to USD ("since" = first price)
+    currency: 'USD', ipoYear: +first.d.slice(0, 4), price: round(num(last.p), 2), // px already USD ("since" = first price)
     mcap: +(mcapUSD / 1e9).toFixed(2),
     m: {
       absGrowth: round(absGrowth), cagr: round(cagr, 1), tsr: round(tsrOk, 1),
@@ -405,6 +411,17 @@ async function buildCrypto([code, name, sym, color]) {
     m: { absGrowth: round((last.p / first.p - 1) * 100), absGrowthTR: round((last.p / first.p - 1) * 100), cagr: round(cagr, 1), tsr: round(cagr, 1), vol: round(sd * Math.sqrt(12) * 100), maxDD: round(mdd * 100), sharpe: sharpe != null ? round(sharpe, 2) : null, ...NUL },
     series: downsampleSeries(px), dec,
   };
+}
+
+const fxSeriesCache = {};
+async function fxSeries(ccy) { // monthly {YYYY-MM: rate-to-USD} for converting a foreign price series to USD-investor terms
+  if (!ccy || ccy === 'USD') return null;
+  if (ccy === 'GBX' || ccy === 'GBp') { const g = await fxSeries('GBP'); if (!g) return null; const o = {}; for (const k in g) o[k] = g[k] * 0.01; return o; }
+  if (fxSeriesCache[ccy] !== undefined) return fxSeriesCache[ccy];
+  const e = await getJSON(`${BASE}/eod/${ccy}USD.FOREX?${tok}&period=m&from=1985-01-01`, { ttlDays: 30 });
+  let m = null;
+  if (Array.isArray(e) && e.length) { m = {}; e.forEach(r => { const v = num(r.close); if (v) m[r.date.slice(0, 7)] = v; }); }
+  return (fxSeriesCache[ccy] = m);
 }
 
 const fxCache = {};
