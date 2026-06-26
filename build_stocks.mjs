@@ -196,6 +196,7 @@ async function buildStock(c) {
   if (G.Type !== 'Common Stock') return null;                  // drop preferreds, notes/bonds, ETFs, funds
   if (!c.foreign && G.Exchange && !MAJOR_EXCH.has(G.Exchange)) return null;  // drop OTC/PINK/grey (US only)
   const fx = c.foreign ? await fxToUsd(G.CurrencyCode) : 1;     // foreign reports in local ccy → convert to USD
+  if (c.foreign && !fx) return null;                           // skip foreign if FX unavailable (don't ship a 1x-inflated mcap)
   let mcapUSD = num(H.MarketCapitalization);
   if (mcapUSD != null) mcapUSD *= fx;
   else if (!c.foreign && c.mcapUSD) mcapUSD = c.mcapUSD * 1e9;  // fall back to the screener's market cap
@@ -233,7 +234,8 @@ async function buildStock(c) {
   // for foreign listings, convert the whole price series to USD using HISTORICAL FX,
   // so growth/CAGR/TSR reflect a USD investor's return (incl. currency drift), not just local price moves
   const fxs = c.foreign ? await fxSeries(G.CurrencyCode) : null;
-  const fxAt = d => c.foreign ? ((fxs && fxs[d.slice(0, 7)]) || fx) : 1;
+  const fxFloor = fxs ? Object.values(fxs)[0] : fx;            // earliest historical rate — for dates before FX coverage, not today's spot
+  const fxAt = d => c.foreign ? ((fxs && fxs[d.slice(0, 7)]) || fxFloor) : 1;
   const px = series.map(r => { const f = fxAt(r.date); return { d: r.date, p: num(r.close) * (splitFactor[r.date] || 1) * f, adj: (num(r.adjusted_close) || num(r.close)) * f }; }).filter(r => r.p);
   const first = px[0], last = px[px.length - 1];
   const yrs = Math.max(yearsBetween(first.d, last.d), 0.5);
@@ -251,7 +253,7 @@ async function buildStock(c) {
   const mean = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
   const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length || 1));
   const vol = sd * Math.sqrt(12) * 100;
-  const sharpe = (sd && rets.length >= 36) ? ((mean * 12 - 0.03) / (sd * Math.sqrt(12))) : null; // 3% rf, ≥3yr
+  let sharpe = (sd && rets.length >= 36) ? ((mean * 12 - 0.03) / (sd * Math.sqrt(12))) : null; // 3% rf, ≥3yr
   let peak = -1e9, maxDD = 0; adj.forEach(v => { peak = Math.max(peak, v); maxDD = Math.min(maxDD, v / peak - 1); });
 
   // dividends: cumulative/share, avg yield, current yield, growth streak
@@ -269,8 +271,9 @@ async function buildStock(c) {
     : (num(H.DividendYield) != null ? num(H.DividendYield) * 100 : 0);
   // avg yield ≈ mean of (annual dividend / that year's avg price)
   const yrlyClose = {}; px.forEach(r => (yrlyClose[+r.d.slice(0, 4)] ||= []).push(r.p));
-  const yields = divYears.map(y => { const arr = yrlyClose[y]; if (!arr) return null; const ap = arr.reduce((a, b) => a + b, 0) / arr.length; return byYear[y] / ap * 100; }).filter(x => x != null);
-  const avgYield = yields.length ? yields.reduce((a, b) => a + b, 0) / yields.length : 0;
+  const yields = divYears.map(y => { const arr = yrlyClose[y]; if (!arr) return null; const ap = arr.reduce((a, b) => a + b, 0) / arr.length; const dfx = c.foreign ? fxAt(y + '-06') : 1; return (byYear[y] * dfx) / ap * 100; }).filter(x => x != null);
+  let avgYield = yields.length ? yields.reduce((a, b) => a + b, 0) / yields.length : 0;
+  if (avgYield > 25) avgYield = null; // clamp impossible avg yields (local-div/USD-price edge, tiny early-price base, special dividends)
 
   const r1 = trailingReturn(px, 1) * 100;
 
@@ -292,7 +295,8 @@ async function buildStock(c) {
   const downCount = rets.filter(x => x < 0).length;
   let sortino = (downside && cleanHist && downCount >= 12) ? (mean * 12 - 0.03) / (downside * Math.sqrt(12)) : null;
   if (sortino != null && (sortino > 8 || sortino < -3)) sortino = null; // tiny-downside-denominator artifacts
-  const calmar = (cleanHist && maxDD < 0) ? (cagr / 100) / Math.abs(maxDD) : null;
+  let calmar = (cleanHist && maxDD < 0) ? (cagr / 100) / Math.abs(maxDD) : null;
+  if (sd * Math.sqrt(12) > 1.5) { sharpe = null; sortino = null; calmar = null; } // implausible vol (>150%/yr) = corrupted returns → drop risk metrics
   let pk = -1e9, uw = 0, uwMax = 0;                                  // longest stretch underwater (months)
   adj.forEach(v => { if (v >= pk) { pk = v; uw = 0; } else { uw++; if (uw > uwMax) uwMax = uw; } });
   const ser = downsampleSeries(px) || [];
@@ -320,7 +324,8 @@ async function buildStock(c) {
   const rule40 = (revCagr != null && num(H.ProfitMargin) != null) ? revCagr + num(H.ProfitMargin) * 100 : null;
   let beta = finNum(Tech.Beta); if (beta != null && (beta < 0.05 || beta > 4)) beta = null; // drop negative/noise-beta artifacts
   const hi52 = finNum(Tech['52WeekHigh']), lo52 = finNum(Tech['52WeekLow']);
-  const range52 = (hi52 && lo52 && hi52 > lo52) ? (num(last.p) - lo52) / (hi52 - lo52) * 100 : null;
+  let range52 = (!c.foreign && hi52 && lo52 && hi52 > lo52) ? (num(last.p) - lo52) / (hi52 - lo52) * 100 : null; // skip foreign (52wk fields are local-ccy)
+  if (range52 != null && (range52 < -5 || range52 > 105)) range52 = null; // stale Technicals vs price-series mismatch
   const apprec = cleanHist ? Math.max(0.03, Math.min(1, 1 - first.p / last.p)) : 0.5; // share of cap that is appreciation
   const wealthCreated = +((mcapUSD / 1e9) * apprec).toFixed(0);      // improved "wealth created" proxy (was raw mcap)
   // EODHD's adjusted_close is corrupted by some mid-history merger/spinoff splices,
@@ -381,8 +386,8 @@ async function buildDead([code, name, sector, country, year]) {
     m: {
       absGrowth: round((last.p / first.p - 1) * 100), absGrowthTR: round((last.p / first.p - 1) * 100),
       cagr: round((Math.pow(Math.max(last.p / first.p, 1e-9), 1 / yrs) - 1) * 100, 1),
-      cumDiv: 0, avgYield: 0, curYield: 0, divStreak: 0, splitCount: 0, splitMult: 1,
-      vol: round(sd * Math.sqrt(12) * 100), maxDD: round(mdd * 100), ...NUL,
+      cumDiv: null, avgYield: null, curYield: null, divStreak: null, splitCount: 0, splitMult: null,
+      vol: null, maxDD: round(mdd * 100), ...NUL, // dead only belong in growth/hall-of-shame, not dividend/low-vol/split lenses
     },
     series: downsampleSeries(px), dec: {},
   };
@@ -403,7 +408,7 @@ async function buildCrypto([code, name, sym, color]) {
   const dec = {};
   for (const ds of [2010, 2020]) { const seg = px.filter(r => { const y = +r.d.slice(0, 4); return y >= ds && y <= ds + 9; }); if (seg.length >= 6 && seg[0].p > 0) dec[ds + 's'] = round((seg[seg.length - 1].p / seg[0].p - 1) * 100); }
   const cagr = (Math.pow(last.p / first.p, 1 / yrs) - 1) * 100;
-  const NUL = { cumDiv: 0, avgYield: 0, curYield: 0, divStreak: 0, divCagr: null, pe: null, pb: null, ps: null, evEbitda: null, peg: null, valueScore: null, qualityScore: null, sortino: null, calmar: null, beta: null, downYears: null, underwaterMonths: null, splitCount: 0, splitMult: 1, phoenix: null, roe: null, roic: null, grossMargin: null, netMargin: null, fcfYield: null, shYield: null, revCagr: null, rule40: null, range52: null, wealthUSD: null, ret1y: null, alphaSpy: null };
+  const NUL = { cumDiv: null, avgYield: null, curYield: null, divStreak: null, divCagr: null, pe: null, pb: null, ps: null, evEbitda: null, peg: null, valueScore: null, qualityScore: null, sortino: null, calmar: null, beta: null, downYears: null, underwaterMonths: null, splitCount: 0, splitMult: 1, phoenix: null, roe: null, roic: null, grossMargin: null, netMargin: null, fcfYield: null, shYield: null, revCagr: null, rule40: null, range52: null, wealthUSD: null, ret1y: null, alphaSpy: null };
   return {
     id: code.split('-')[0], ticker: code, name, exchange: 'crypto', country: '—', flag: sym, sector: 'Cryptocurrency', industry: null,
     currency: 'USD', ipoYear: +first.d.slice(0, 4), price: round(last.p, 2), mcap: null,
@@ -429,11 +434,11 @@ async function fxToUsd(ccy) {
   if (!ccy || ccy === 'USD') return 1;
   if (ccy === 'GBX' || ccy === 'GBp') return 0.01 * (await fxToUsd('GBP'));
   if (ccy === 'ZAc') return 0.01 * (await fxToUsd('ZAR'));
-  if (fxCache[ccy] != null) return fxCache[ccy];
+  if (ccy in fxCache) return fxCache[ccy];
   const e = await getJSON(`${BASE}/eod/${ccy}USD.FOREX?${tok}&period=m&from=2025-01-01`, { ttlDays: 7 });
   const r = (Array.isArray(e) && e.length) ? num(e[e.length - 1].close) : null;
   if (!r) console.warn(`  ! no FX for ${ccy}USD — using 1`);
-  return (fxCache[ccy] = r || 1);
+  return (fxCache[ccy] = r); // null on failure → caller skips the foreign stock (no silent 1x fallback)
 }
 
 function buildSplitFactors(splits, eod) {

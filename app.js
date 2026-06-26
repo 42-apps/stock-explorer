@@ -84,7 +84,7 @@ function filtered() {
 }
 function ranked() {
   const p = activeP();
-  const list = filtered().filter(s => metricVal(s, p) != null); // a lens only ranks stocks that have that metric
+  const list = filtered().filter(s => metricVal(s, p) != null && s.kind !== 'crypto'); // crypto is a reference, not a ranked stock
   list.sort((a, b) => p.dir === 'asc' ? metricVal(a, p) - metricVal(b, p) : metricVal(b, p) - metricVal(a, p));
   return list;
 }
@@ -173,7 +173,7 @@ function renderDecade() {
   const lb = $('#leaderboard'); lb.innerHTML = '';
   const grid = el('div', 'decade-grid');
   decades.forEach(dk => {
-    const ranked = STOCKS.filter(s => s.dec && s.dec[dk] != null).sort((a, b) => b.dec[dk] - a.dec[dk]);
+    const ranked = STOCKS.filter(s => s.dec && s.dec[dk] != null && s.kind !== 'crypto' && !s.delisted).sort((a, b) => b.dec[dk] - a.dec[dk]);
     if (!ranked.length) return;
     const win = ranked[0];
     const card = el('div', 'decade-card');
@@ -299,7 +299,7 @@ function subStat(s, p) {
     case 'Valuation': return `P/E ${s.m.pe || '—'} · P/B ${s.m.pb || '—'}`;
     case 'Quality': return `ROIC ${nf(s.m.roic, '%')} · net margin ${nf(s.m.netMargin, '%')}`;
     case 'Growth': return `CAGR ${nf(s.m.cagr, '%/yr')} · since ${s.ipoYear}`;
-    default: return `mcap $${s.mcap >= 1000 ? (s.mcap/1000).toFixed(1)+'T' : s.mcap+'B'} · since ${s.ipoYear}`;
+    default: return `${s.mcap != null ? 'mcap $' + (s.mcap >= 1000 ? (s.mcap / 1000).toFixed(1) + 'T' : s.mcap + 'B') + ' · ' : ''}since ${s.ipoYear}`;
   }
 }
 
@@ -333,6 +333,21 @@ function pickBadge(s) { return s.pick ? `<span class="badge pick">✦ Pick</span
 
 function renderBoard(list, p, fracs) {
   const lb = $('#leaderboard'); lb.innerHTML = '';
+  // crypto comparison rows for the growth lenses — shown ABOVE the ranked stocks, as a labeled reference (not a numbered rank)
+  if (['absGrowth', 'absGrowthTR', 'cagr', 'tsr'].includes(p.field)) {
+    STOCKS.filter(s => s.kind === 'crypto' && metricVal(s, p) != null).sort((a, b) => metricVal(b, p) - metricVal(a, p)).forEach(s => {
+      const v = metricVal(s, p), cr = s.refColor;
+      const row = el('div', 'lb-row lb-crypto'); row.style.borderColor = cr;
+      row.innerHTML =
+        `<div class="lb-rank" style="color:${cr};font-size:17px">${s.flag}</div>
+         <div class="lb-id"><div class="lb-nm"><span class="nm">${esc(s.name)}</span><span class="badge ref" style="color:${cr};border-color:${cr}">reference · not a stock</span></div>
+           <div class="lb-meta"><span class="tk">${esc(s.ticker)}</span> · shown for comparison</div></div>
+         <div class="lb-bar"><div class="lb-bar-fill" style="width:100%;background:${cr}"></div></div>
+         <div class="lb-val" style="color:${cr}">${fmtVal(v, p)}</div>`;
+      row.onclick = () => openDetail(s.id);
+      lb.appendChild(row);
+    });
+  }
   list.forEach((s, i) => {
     const v = metricVal(s, p);
     const neg = v < 0;
@@ -370,10 +385,10 @@ function openDetail(id) {
      <div class="d-chips">
        <span class="d-chip">${esc(s.sector)}</span>
        <span class="d-chip">Price ${s.currency} ${s.price}</span>
-       <span class="d-chip">Mcap $${s.mcap >= 1000 ? (s.mcap/1000).toFixed(2)+'T' : s.mcap+'B'}</span>
+       ${s.mcap != null ? `<span class="d-chip">Mcap $${s.mcap >= 1000 ? (s.mcap / 1000).toFixed(2) + 'T' : s.mcap + 'B'}</span>` : ''}
      </div>
      <div class="d-curve">${growthCurveSVG(s)}
-       <div class="cap"><span>$100 in ${s.ipoYear} · dividends reinvested</span><span>→ <b>${tmValueStr(s, s.ipoYear)}</b> today</span></div>
+       <div class="cap"><span>$100 in ${s.ipoYear} · dividends reinvested</span><span>→ <b>${tmValueStr(s, s.ipoYear)}</b> ${s.delisted ? 'by ' + s.delistYear : 'today'}</span></div>
      </div>
      <div class="d-sec-h">Growth</div>
      <div class="d-grid">
@@ -394,7 +409,7 @@ function openDetail(id) {
        ${cell('P/E', m.pe || '—')}
        ${cell('P/B', m.pb || '—')}
        ${cell('EV/EBITDA', m.evEbitda || '—')}
-       ${cell('Value score', m.valueScore + '/100')}
+       ${cell('Value score', m.valueScore != null ? m.valueScore + '/100' : '—')}
      </div>
      <div class="d-sec-h">Quality &amp; risk</div>
      <div class="d-grid">
@@ -406,7 +421,7 @@ function openDetail(id) {
      <div class="d-sec-h">Impact</div>
      <div class="d-grid">
        ${cell('Wealth created', fmtVal(m.wealthUSD, { unit: '$B' }), m.wealthUSD >= 0 ? 'pos' : 'neg')}
-       ${cell('Quality score', m.qualityScore + '/100')}
+       ${cell('Quality score', m.qualityScore != null ? m.qualityScore + '/100' : '—')}
      </div>
      ${s.pick ? `<div class="d-sec-h">✦ Claude's Pick</div>` +
        (s.pick.growth ? `<div class="d-pick"><div class="d-pick-h">Growth · <b>${esc(s.pick.growth.projection)}</b> · ${esc(s.pick.growth.conviction)} conviction</div><div class="d-pick-r">${esc(s.pick.growth.rationale)}</div></div>` : '') +
@@ -473,12 +488,14 @@ function renderTM() {
   const start = Math.max(y, s.ipoYear);
   const path = pathFor(s, y);
   const end = path[path.length - 1][1];
+  const endYr = path[path.length - 1][0]; // delisted stocks' series stop at delisting, not NOW
   const mult = end / 100;
   const neg = end < 100;
-  const note = y < s.ipoYear ? ` <span class="mult">(${s.name} only listed in ${s.ipoYear})</span>` : '';
+  const note = (y < s.ipoYear ? ` <span class="mult">(${s.name} only listed in ${s.ipoYear})</span>` : '')
+    + (s.delisted ? ` <span class="mult">— delisted ${s.delistYear}</span>` : '');
   $('#tmResult').innerHTML =
     `<span>$100 in ${start} →</span> <span class="big ${neg ? 'neg' : ''}">${tmValueStr(s, y)}</span>
-     <span class="mult">that's ${mult >= 1 ? mult.toFixed(mult < 10 ? 1 : 0) + '×' : '−' + ((1 - mult) * 100).toFixed(0) + '%'} over ${NOW - start} years · ${s.m.cagr}%/yr</span>${note}`;
+     <span class="mult">that's ${mult >= 1 ? mult.toFixed(mult < 10 ? 1 : 0) + '×' : '−' + ((1 - mult) * 100).toFixed(0) + '%'} over ${endYr - start} years · ${s.m.cagr}%/yr</span>${note}`;
   $('#tmChart').innerHTML = curveSVG(path, 720, 230, neg) + tmAxis(path, 720, 230);
 }
 function tmAxis(path, w, h) {
