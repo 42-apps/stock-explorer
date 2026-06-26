@@ -279,13 +279,15 @@ function renderPodium(list, p) {
   const pod = $('#podium'); pod.innerHTML = '';
   list.slice(0, 3).forEach((s, i) => {
     const v = metricVal(s, p);
-    const card = el('div', `pod r${i + 1}${v < 0 ? ' neg' : ''}`);
+    const cr = s.kind === 'crypto' ? s.refColor : null;
+    const card = el('div', `pod r${i + 1}${v < 0 ? ' neg' : ''}${cr ? ' pod-crypto' : ''}`);
+    if (cr) card.style.borderColor = cr;
     card.innerHTML =
       `<div class="pod-medal">${['🥇','🥈','🥉'][i]}</div>
        <div class="pod-rank">#${i + 1} · ${esc(p.label)}</div>
-       <div class="pod-name"><span class="pod-flag">${s.flag}</span>${esc(s.name)}${dividBadge(s)}${deadBadge(s)}</div>
+       <div class="pod-name"><span class="pod-flag">${s.flag}</span>${esc(s.name)}${dividBadge(s)}${deadBadge(s)}${cr ? `<span class="badge ref" style="color:${cr};border-color:${cr}">reference</span>` : ''}</div>
        <div class="pod-tk">${esc(s.ticker)} · ${esc(s.sector)} · ${esc(s.country)}</div>
-       <div class="pod-val">${fmtVal(v, p)}</div>
+       <div class="pod-val"${cr ? ` style="color:${cr}"` : ''}>${fmtVal(v, p)}</div>
        <div class="pod-sub">${esc(subStat(s, p))}</div>`;
     card.onclick = () => openDetail(s.id);
     pod.appendChild(card);
@@ -305,15 +307,18 @@ function renderBoard(list, p, fracs) {
   list.forEach((s, i) => {
     const v = metricVal(s, p);
     const neg = v < 0;
-    const row = el('div', 'lb-row');
+    const cr = s.kind === 'crypto' ? s.refColor : null;
+    const row = el('div', 'lb-row' + (cr ? ' lb-crypto' : ''));
+    if (cr) row.style.borderColor = cr;
+    const barStyle = `width:${(fracs[i] * 100).toFixed(1)}%` + (cr ? `;background:${cr}` : '');
     row.innerHTML =
       `<div class="lb-rank">${i + 1}</div>
        <div class="lb-id">
-         <div class="lb-nm"><span class="f">${s.flag}</span><span class="nm">${esc(s.name)}</span>${dividBadge(s)}${deadBadge(s)}</div>
+         <div class="lb-nm"><span class="f">${s.flag}</span><span class="nm">${esc(s.name)}</span>${dividBadge(s)}${deadBadge(s)}${cr ? `<span class="badge ref" style="color:${cr};border-color:${cr}">reference</span>` : ''}</div>
          <div class="lb-meta"><span class="tk">${esc(s.ticker)}</span> · ${esc(s.sector)} · ${esc(subStat(s, p))}</div>
        </div>
-       <div class="lb-bar"><div class="lb-bar-fill ${neg ? 'neg' : ''}" style="width:${(fracs[i] * 100).toFixed(1)}%"></div></div>
-       <div class="lb-val ${neg ? 'neg' : 'pos'}">${fmtVal(v, p)}</div>`;
+       <div class="lb-bar"><div class="lb-bar-fill ${neg ? 'neg' : ''}" style="${barStyle}"></div></div>
+       <div class="lb-val ${neg ? 'neg' : 'pos'}"${cr ? ` style="color:${cr}"` : ''}>${fmtVal(v, p)}</div>`;
     row.onclick = () => openDetail(s.id);
     lb.appendChild(row);
   });
@@ -332,6 +337,7 @@ function openDetail(id) {
      <div class="d-name">${esc(s.name)} ${dividBadge(s)}${deadBadge(s)}</div>
      <div class="d-sub">${esc(s.ticker)} · ${esc(s.exchange)} · listed ${s.ipoYear} · ${esc(s.country)}</div>
      ${s.delisted ? `<div class="d-dead">🪦 Delisted ${s.delistYear} · peaked $${s.peakPrice} in ${s.peakYear} · <b>${s.peakDrop}%</b> from peak</div>` : ''}
+     ${s.kind === 'crypto' ? `<div class="d-ref" style="border-color:${s.refColor};color:${s.refColor}">${s.flag} Reference asset — a cryptocurrency shown for comparison, not a stock.</div>` : ''}
      <div class="d-chips">
        <span class="d-chip">${esc(s.sector)}</span>
        <span class="d-chip">Price ${s.currency} ${s.price}</span>

@@ -121,6 +121,12 @@ const DEAD = [
   ['JAVA_old', 'Sun Microsystems', 'Technology', 'USA', 2010],
 ];
 
+/* crypto reference points (NOT stocks) — shown in a distinct colour for comparison */
+const CRYPTO = [
+  ['BTC-USD.CC', 'Bitcoin', '₿', '#f7931a'],
+  ['ETH-USD.CC', 'Ethereum', 'Ξ', '#7b8cff'],
+];
+
 /* ---- 1. universe selection --------------------------------------------- */
 async function pickUniverse() {
   // The screener caps offset at ~1000, so to reach deeper than the mega-caps we
@@ -346,6 +352,31 @@ async function buildDead([code, name, sector, country, year]) {
   };
 }
 
+async function buildCrypto([code, name, sym, color]) {
+  const eod = await getJSON(epEOD(code));
+  if (!Array.isArray(eod)) return null;
+  const px = eod.map(r => ({ d: r.date, p: num(r.close) })).filter(r => r.p > 0);
+  if (px.length < 24) return null;
+  const first = px[0], last = px[px.length - 1];
+  const yrs = Math.max(yearsBetween(first.d, last.d), 1);
+  const rets = []; for (let i = 1; i < px.length; i++) rets.push(px[i].p / px[i - 1].p - 1);
+  const mean = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
+  const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length || 1));
+  const sharpe = sd ? (mean * 12 - 0.03) / (sd * Math.sqrt(12)) : null;
+  let pk = -1e9, mdd = 0; px.forEach(r => { pk = Math.max(pk, r.p); mdd = Math.min(mdd, r.p / pk - 1); });
+  const dec = {};
+  for (const ds of [2010, 2020]) { const seg = px.filter(r => { const y = +r.d.slice(0, 4); return y >= ds && y <= ds + 9; }); if (seg.length >= 6 && seg[0].p > 0) dec[ds + 's'] = round((seg[seg.length - 1].p / seg[0].p - 1) * 100); }
+  const cagr = (Math.pow(last.p / first.p, 1 / yrs) - 1) * 100;
+  const NUL = { cumDiv: 0, avgYield: 0, curYield: 0, divStreak: 0, divCagr: null, pe: null, pb: null, ps: null, evEbitda: null, peg: null, valueScore: null, qualityScore: null, sortino: null, calmar: null, beta: null, downYears: null, underwaterMonths: null, splitCount: 0, splitMult: 1, phoenix: null, roe: null, roic: null, grossMargin: null, netMargin: null, fcfYield: null, shYield: null, revCagr: null, rule40: null, range52: null, wealthUSD: null, ret1y: null, alphaSpy: null };
+  return {
+    id: code.split('-')[0], ticker: code, name, exchange: 'crypto', country: '—', flag: sym, sector: 'Cryptocurrency', industry: null,
+    currency: 'USD', ipoYear: +first.d.slice(0, 4), price: round(last.p, 2), mcap: null,
+    kind: 'crypto', refColor: color,
+    m: { absGrowth: round((last.p / first.p - 1) * 100), absGrowthTR: round((last.p / first.p - 1) * 100), cagr: round(cagr, 1), tsr: round(cagr, 1), vol: round(sd * Math.sqrt(12) * 100), maxDD: round(mdd * 100), sharpe: sharpe != null ? round(sharpe, 2) : null, ...NUL },
+    series: downsampleSeries(px), dec,
+  };
+}
+
 function buildSplitFactors(splits, eod) {
   // returns map date→cumulative factor so close*factor is split-adjusted to "today"
   const f = {}; eod.forEach(r => f[r.date] = 1);
@@ -448,6 +479,11 @@ async function pool(items, worker, n) {
   const dead = (await pool(DEAD, buildDead, CONCURRENCY)).filter(Boolean);
   console.log(`  + ${dead.length} delisted/dead companies`);
   stocks.push(...dead);
+
+  // crypto reference points (Bitcoin, Ethereum)
+  const crypto = (await pool(CRYPTO, buildCrypto, CONCURRENCY)).filter(Boolean);
+  console.log(`  + ${crypto.length} crypto reference points`);
+  stocks.push(...crypto);
 
   const out = {
     meta: {
