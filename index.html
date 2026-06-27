@@ -9,7 +9,7 @@
 <meta property="og:description" content="Rank global equities by every angle that matters: moonshot growth, dividend kings, cheapest & richest valuations, risk-adjusted winners, and a $100 time machine.">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Crect width='256' height='256' rx='58' fill='%230b0f14'/%3E%3Cpolyline points='40,180 96,128 140,156 216,64' fill='none' stroke='%2342e6a4' stroke-width='18' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='216' cy='64' r='16' fill='%2342e6a4'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="app.css?v=7">
+<link rel="stylesheet" href="app.css?v=8">
 </head>
 <body>
 
@@ -34,6 +34,7 @@
         <input id="search" type="text" placeholder="Search a company or ticker…" autocomplete="off" spellcheck="false" aria-label="Search">
         <div id="searchResults" class="hidden"></div>
       </div>
+      <button id="compareBtn" class="cta" title="Compare two companies head-to-head">⚔️ <span class="cta-tx">Compare</span></button>
       <button id="timeMachineBtn" class="cta" title="The $100 time machine">⏳ <span class="cta-tx">Time machine</span></button>
       <button id="menuBtn" class="iconbtn" title="Menu" aria-label="Menu">☰</button>
       <div id="menu" class="hidden">
@@ -99,6 +100,24 @@
     </div>
   </div>
 
+  <!-- ===== Head-to-head compare ===== -->
+  <div id="cmpOverlay" class="overlay hidden">
+    <div class="ov-box wide">
+      <button class="ov-close" id="cmpClose" aria-label="Close">×</button>
+      <h2>⚔️ Head-to-head</h2>
+      <p class="ov-lead">Two companies, one chart. <b>$100</b> in each at the earliest year they both traded — dividends reinvested.</p>
+      <div id="cmpControls">
+        <label>A <select id="cmpA"></select></label>
+        <span class="cmp-vs">vs</span>
+        <label>B <select id="cmpB"></select></label>
+      </div>
+      <svg id="cmpChart" viewBox="0 0 720 240" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <div id="cmpLegend"></div>
+      <div id="cmpTable"></div>
+      <p class="ov-cav">Total return (dividends reinvested) where available; foreign converted to USD. Past performance is not a forecast — not financial advice.</p>
+    </div>
+  </div>
+
   <!-- ===== About ===== -->
   <div id="aboutOverlay" class="overlay hidden">
     <div class="ov-box">
@@ -141,8 +160,8 @@
   </div>
 
   <script src="lib/globe.gl.min.js"></script>
-  <script src="data/countries.js?v=7"></script>
-  <script src="data/stocks.js?v=7"></script>
-  <script src="app.js?v=7"></script>
+  <script src="data/countries.js?v=8"></script>
+  <script src="data/stocks.js?v=8"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>

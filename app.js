@@ -510,6 +510,70 @@ function openTM(id, year) {
 }
 window.__openTM = (id, year) => { closeDetail(); openTM(id, year); };
 
+/* ----------------------------- head-to-head compare ---------------------- */
+const CMP_A = '#f6c94a', CMP_B = '#5aa9ff';
+const money = v => v == null ? '—' : v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M' : v >= 1000 ? '$' + commas(v) : '$' + v.toFixed(0);
+function buildCompare() {
+  const opts = STOCKS.slice().sort((a, b) => a.name.localeCompare(b.name))
+    .map(s => `<option value="${s.id}">${esc(s.flag + ' ' + s.name)} (${esc(s.ticker.replace('.US', ''))})</option>`).join('');
+  $('#cmpA').innerHTML = opts; $('#cmpB').innerHTML = opts;
+  if (byId['KO']) $('#cmpA').value = 'KO';
+  if (byId['PEP']) $('#cmpB').value = 'PEP';
+  $('#cmpA').onchange = renderCompare; $('#cmpB').onchange = renderCompare;
+}
+function openCompare(idA, idB) {
+  $('#cmpOverlay').classList.remove('hidden');
+  if (idA && byId[idA]) $('#cmpA').value = idA;
+  if (idB && byId[idB]) $('#cmpB').value = idB;
+  renderCompare();
+}
+function renderCompare() {
+  const a = byId[$('#cmpA').value], b = byId[$('#cmpB').value];
+  if (!a || !b) return;
+  const start = Math.max(a.ipoYear, b.ipoYear);
+  const pa = pathFor(a, start), pb = pathFor(b, start);
+  const endA = pa[pa.length - 1][1], endB = pb[pb.length - 1][1];
+  $('#cmpChart').innerHTML = twoCurveSVG(pa, pb, 720, 240);
+  $('#cmpLegend').innerHTML =
+    `<span class="cl" style="color:${CMP_A}">■ ${esc(a.flag)} ${esc(a.name)} → <b>${money(endA)}</b></span>
+     <span class="cl" style="color:${CMP_B}">■ ${esc(b.flag)} ${esc(b.name)} → <b>${money(endB)}</b></span>
+     <span class="cl-since">$100 since ${start}${(a.delisted || b.delisted) ? ' · until delisting' : ''}</span>`;
+  const rows = [
+    ['$100 grew to', () => endA, () => endB, 'hi'],
+    ['Annual return (CAGR)', a.m.cagr, b.m.cagr, 'hi', '%/yr'],
+    ['Total return /yr', a.m.tsr, b.m.tsr, 'hi', '%/yr'],
+    ['Current yield', a.m.curYield, b.m.curYield, 'hi', '%'],
+    ['Beat S&P /yr', a.m.alphaSpy, b.m.alphaSpy, 'hi', '%/yr'],
+    ['P/E', a.m.pe, b.m.pe, 'lo', 'raw'],
+    ['Quality', a.m.qualityScore, b.m.qualityScore, 'hi', '/100'],
+    ['Risk-adj (Sharpe)', a.m.sharpe, b.m.sharpe, 'hi', 'raw'],
+    ['Worst drawdown', a.m.maxDD, b.m.maxDD, 'hi', '%'],
+    ['Volatility', a.m.vol, b.m.vol, 'lo', '%'],
+  ];
+  const fmt = (v, u) => v == null ? '—' : u === '$' || typeof v === 'object' ? money(v) : u === 'raw' ? v : u === '/100' ? v + '/100' : nf(v, u);
+  $('#cmpTable').innerHTML =
+    `<table class="cmp-t"><tr><th></th><th style="color:${CMP_A}">${esc(a.ticker.replace('.US', ''))}</th><th style="color:${CMP_B}">${esc(b.ticker.replace('.US', ''))}</th></tr>` +
+    rows.map(r => {
+      const label = r[0], dir = r[3], u = r[4] || '';
+      const va = typeof r[1] === 'function' ? r[1]() : r[1], vb = typeof r[2] === 'function' ? r[2]() : r[2];
+      let wa = '', wb = '';
+      if (va != null && vb != null && va !== vb) { (dir === 'hi' ? va > vb : va < vb) ? wa = 'win' : wb = 'win'; }
+      const f = v => label === '$100 grew to' ? money(v) : fmt(v, u);
+      return `<tr><td>${label}</td><td class="${wa}">${f(va)}</td><td class="${wb}">${f(vb)}</td></tr>`;
+    }).join('') + '</table>';
+}
+function twoCurveSVG(pa, pb, w, h) {
+  const all = pa.concat(pb).map(p => p[1]);
+  const lo = Math.min(...all), hi = Math.max(...all);
+  const logS = hi / Math.max(lo, 0.01) > 50;
+  const ny = v => logS ? (Math.log10(Math.max(v, .01)) - Math.log10(Math.max(lo, .01))) / ((Math.log10(hi) - Math.log10(Math.max(lo, .01))) || 1) : (v - lo) / (hi - lo || 1);
+  const x0 = pa[0][0], x1 = Math.max(pa[pa.length - 1][0], pb[pb.length - 1][0]);
+  const X = yr => ((yr - x0) / ((x1 - x0) || 1)) * w, Y = v => h - 8 - ny(v) * (h - 18);
+  const line = (path, col) => { let d = ''; path.forEach((p, i) => { d += (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1) + ' '; }); return `<path d="${d}" fill="none" stroke="${col}" stroke-width="2.5" stroke-linejoin="round"/>`; };
+  return line(pa, CMP_A) + line(pb, CMP_B) +
+    `<text x="6" y="${h - 5}" fill="var(--ink-faint)" font-size="12">${x0}</text><text x="${w - 6}" y="${h - 5}" fill="var(--ink-faint)" font-size="12" text-anchor="end">${x1}</text>`;
+}
+
 /* ----------------------------- search ------------------------------------ */
 function setupSearch() {
   const inp = $('#search'), box = $('#searchResults');
@@ -537,6 +601,8 @@ function setupOverlays() {
   $('#aboutClose').onclick = () => hide('#aboutOverlay');
   $('#dataClose').onclick = () => hide('#dataOverlay');
   $('#tmClose').onclick = () => hide('#tmOverlay');
+  $('#cmpClose').onclick = () => hide('#cmpOverlay');
+  $('#compareBtn').onclick = () => openCompare();
   $('#detailClose').onclick = closeDetail;
   $('#scrim').onclick = closeDetail;
   $('#timeMachineBtn').onclick = () => openTM();
@@ -574,7 +640,7 @@ function boot() {
   const params = new URLSearchParams(location.search);
   const lp = params.get('lens'); if (lp && PERSP.find(p => p.id === lp)) state.lens = lp;
 
-  buildRail(); buildFilters(); buildTM(); setupSearch(); setupOverlays();
+  buildRail(); buildFilters(); buildTM(); buildCompare(); setupSearch(); setupOverlays();
   render();
 
   if (!localStorage.getItem('se_seen')) { show('#welcomeOverlay'); try { localStorage.setItem('se_seen', '1'); } catch (e) {} }
