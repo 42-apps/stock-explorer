@@ -22,6 +22,11 @@ const PERSP = (() => {
 const STOCKS = DATA.stocks;
 const byId = {}; STOCKS.forEach(s => byId[s.id] = s);
 const NOW = 2026;
+/* US CPI-U annual index (1982-84=100), public domain (BLS). For inflation-adjusted "real" returns. */
+const CPI = { 1960: 29.6, 1965: 31.5, 1970: 38.8, 1971: 40.5, 1972: 41.8, 1973: 44.4, 1974: 49.3, 1975: 53.8, 1976: 56.9, 1977: 60.6, 1978: 65.2, 1979: 72.6, 1980: 82.4, 1981: 90.9, 1982: 96.5, 1983: 99.6, 1984: 103.9, 1985: 107.6, 1986: 109.6, 1987: 113.6, 1988: 118.3, 1989: 124.0, 1990: 130.7, 1991: 136.2, 1992: 140.3, 1993: 144.5, 1994: 148.2, 1995: 152.4, 1996: 156.9, 1997: 160.5, 1998: 163.0, 1999: 166.6, 2000: 172.2, 2001: 177.1, 2002: 179.9, 2003: 184.0, 2004: 188.9, 2005: 195.3, 2006: 201.6, 2007: 207.3, 2008: 215.3, 2009: 214.5, 2010: 218.1, 2011: 224.9, 2012: 229.6, 2013: 233.0, 2014: 236.7, 2015: 237.0, 2016: 240.0, 2017: 245.1, 2018: 251.1, 2019: 255.7, 2020: 258.8, 2021: 271.0, 2022: 292.7, 2023: 304.7, 2024: 313.7, 2025: 322.0, 2026: 330.0 };
+const cpi = y => { y = Math.max(1960, Math.min(NOW, y)); while (CPI[y] == null && y > 1960) y--; return CPI[y] || CPI[1960]; };
+const cpiFactor = startY => cpi(startY) / CPI[NOW]; // <1: deflates nominal → real (start-year purchasing power)
+const REAL_FIELDS = new Set(['absGrowth', 'absGrowthTR', 'cagr', 'tsr']);
 
 /* ----------------------------- helpers ----------------------------------- */
 const $ = sel => document.querySelector(sel);
@@ -33,7 +38,15 @@ const commas = n => (Math.round(n)).toLocaleString('en-US');
 const nf = (v, suf = '') => (v == null ? '—' : v + suf);
 const pctStr = v => v == null ? '—' : (v < 0 ? '−' : '+') + (Math.abs(v) >= 10000 ? commas(Math.abs(v)) : Math.abs(v).toFixed(0)) + '%';
 
-function metricVal(s, p) { return (s.m && s.m[p.field] != null) ? s.m[p.field] : null; }
+function metricVal(s, p) {
+  if (!s.m || s.m[p.field] == null) return null;
+  let v = s.m[p.field];
+  if (state.real && REAL_FIELDS.has(p.field) && !s.delisted) { // inflation-adjust return metrics into real terms
+    const f = cpiFactor(s.ipoYear), yrs = Math.max(NOW - s.ipoYear, 1);
+    v = (p.field === 'cagr' || p.field === 'tsr') ? ((1 + v / 100) * Math.pow(f, 1 / yrs) - 1) * 100 : ((1 + v / 100) * f - 1) * 100;
+  }
+  return v;
+}
 
 /* compact value formatting per lens unit */
 function fmtVal(v, p) {
@@ -73,7 +86,7 @@ function barFracs(list, p) {
 }
 
 /* ----------------------------- state ------------------------------------- */
-let state = { lens: PERSP[0] ? PERSP[0].id : null, region: 'All', sector: 'All' };
+let state = { lens: PERSP[0] ? PERSP[0].id : null, region: 'All', sector: 'All', real: false };
 
 function activeP() { return PERSP.find(p => p.id === state.lens) || PERSP[0]; }
 
@@ -140,6 +153,18 @@ function buildFilters() {
   ss.innerHTML = sectors.map(r => `<option>${esc(r)}</option>`).join('');
   rs.onchange = () => { state.region = rs.value; render(); };
   ss.onchange = () => { state.sector = ss.value; render(); };
+  $('#realToggle').onchange = e => {
+    state.real = e.target.checked; render();
+    if (!$('#tmOverlay').classList.contains('hidden')) renderTM();
+    if (!$('#cmpOverlay').classList.contains('hidden')) renderCompare();
+  };
+}
+/* the all-time-high preceding the deepest drawdown = the worst moment to have bought */
+function worstEntryYear(s) {
+  const ser = s.series; if (!ser || ser.length < 3) return s.ipoYear;
+  let peakV = ser[0][1], peakY = ser[0][0], worstDD = 0, worstPeakY = ser[0][0];
+  for (const [y, v] of ser) { if (v > peakV) { peakV = v; peakY = y; } const dd = v / peakV - 1; if (dd < worstDD) { worstDD = dd; worstPeakY = peakY; } }
+  return worstPeakY;
 }
 
 /* ----------------------------- render ------------------------------------ */
@@ -438,14 +463,14 @@ function closeDetail() { $('#detailCard').classList.add('hidden'); $('#scrim').c
 /* synthesise a $100 path from CAGR when no real series is loaded */
 function pathFor(s, startYear) {
   const start = Math.max(startYear, s.ipoYear);
-  const g = (s.m.cagr || 0) / 100;
-  const pts = [];
-  for (let y = start; y <= NOW; y++) pts.push([y, 100 * Math.pow(1 + g, y - start)]);
+  let out;
   if (s.series && s.series.length) {
     const seg = s.series.filter(p => p[0] >= start);
-    if (seg.length > 1) { const base = seg[0][1]; return seg.map(p => [p[0], 100 * p[1] / base]); }
+    if (seg.length > 1) { const base = seg[0][1]; out = seg.map(p => [p[0], 100 * p[1] / base]); }
   }
-  return pts;
+  if (!out) { const g = (s.m.cagr || 0) / 100; out = []; for (let y = start; y <= NOW; y++) out.push([y, 100 * Math.pow(1 + g, y - start)]); }
+  if (state.real) { const cs = cpi(start); out = out.map(([y, v]) => [y, v * cs / cpi(y)]); } // deflate into start-year dollars
+  return out;
 }
 function tmValue(s, startYear) { const p = pathFor(s, startYear); return p[p.length - 1][1]; }
 function tmValueStr(s, startYear) {
@@ -603,6 +628,7 @@ function setupOverlays() {
   $('#tmClose').onclick = () => hide('#tmOverlay');
   $('#cmpClose').onclick = () => hide('#cmpOverlay');
   $('#compareBtn').onclick = () => openCompare();
+  $('#tmWorst').onclick = () => { const s = byId[$('#tmStock').value]; if (s) { $('#tmYear').value = worstEntryYear(s); renderTM(); } };
   $('#detailClose').onclick = closeDetail;
   $('#scrim').onclick = closeDetail;
   $('#timeMachineBtn').onclick = () => openTM();
@@ -616,15 +642,26 @@ function setupOverlays() {
 }
 function dataOverlayHTML() {
   const m = DATA.meta;
+  const live = STOCKS.filter(s => s.kind !== 'crypto');
+  const dead = live.filter(s => s.delisted).length;
+  const byDec = {};
+  live.filter(s => !s.delisted).forEach(s => { const d = Math.floor(s.ipoYear / 10) * 10; byDec[d] = (byDec[d] || 0) + 1; });
+  const decs = Object.keys(byDec).map(Number).sort((a, b) => a - b);
+  const mx = Math.max(...decs.map(d => byDec[d]), 1);
+  const bars = decs.map(d => `<div class="hm-row"><span class="hm-lbl">${d}s</span><div class="hm-bar"><div class="hm-fill" style="width:${(byDec[d] / mx * 100).toFixed(0)}%"></div></div><span class="hm-n">${byDec[d]}</span></div>`).join('');
   return `<p>${esc(m.universe || '')}. Snapshot: <b>${esc(m.asOf || '')}</b>.</p>
     <table>
       <tr><td>Source</td><td>${esc(m.source || '')}</td></tr>
       <tr><td>Universe</td><td>${esc(m.universe || '')} · ${STOCKS.length} companies</td></tr>
-      <tr><td>Prices</td><td>Split- and dividend-adjusted closes; total return reinvests dividends.</td></tr>
-      <tr><td>Valuation</td><td>Composite of P/E, P/B, P/S, EV/EBITDA and PEG vs. the universe (0 = cheap, 100 = rich).</td></tr>
+      <tr><td>Prices</td><td>Split- and dividend-adjusted closes; total return reinvests dividends. Foreign listings converted to USD; the "real $" toggle deflates by US CPI.</td></tr>
+      <tr><td>Valuation</td><td>Composite of P/E, P/B, P/S, EV/EBITDA and PEG vs. the sector (0 = cheap, 100 = rich).</td></tr>
       <tr><td>Quality</td><td>Blend of return on capital, margins and earnings consistency.</td></tr>
-      <tr><td>Caveats</td><td>Survivorship &amp; era bias affect all-time tables; screens are not advice.</td></tr>
-    </table>`;
+    </table>
+    <h3>⚖️ Survivorship &amp; honesty</h3>
+    <p>This board ranks companies <b>listed today</b> — so the bankruptcies, buy-outs and dot-com flameouts that didn't survive have mostly been pruned by history. That quietly <b>flatters every "all-time" table</b>. We claw some of it back with <b>${dead}</b> famous failures in the 🪦 Graveyard, but thousands more aren't here.</p>
+    <p class="hm-cap">Companies by the decade they first appear in our price data — see how thin the early decades are (only the survivors remain):</p>
+    <div class="hm">${bars}</div>
+    <p class="ov-cav">So read the oldest-era leaders as "best <i>survivors</i>," not "best bets." The per-decade 🏆, CAGR 📈 and inflation-adjusted (💵 real $) views all help correct for era distortion.</p>`;
 }
 
 /* ----------------------------- boot -------------------------------------- */
