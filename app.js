@@ -23,7 +23,7 @@ const STOCKS = DATA.stocks;
 const byId = {}; STOCKS.forEach(s => byId[s.id] = s);
 const NOW = 2026;
 /* US CPI-U annual index (1982-84=100), public domain (BLS). For inflation-adjusted "real" returns. */
-const CPI = { 1960: 29.6, 1965: 31.5, 1970: 38.8, 1971: 40.5, 1972: 41.8, 1973: 44.4, 1974: 49.3, 1975: 53.8, 1976: 56.9, 1977: 60.6, 1978: 65.2, 1979: 72.6, 1980: 82.4, 1981: 90.9, 1982: 96.5, 1983: 99.6, 1984: 103.9, 1985: 107.6, 1986: 109.6, 1987: 113.6, 1988: 118.3, 1989: 124.0, 1990: 130.7, 1991: 136.2, 1992: 140.3, 1993: 144.5, 1994: 148.2, 1995: 152.4, 1996: 156.9, 1997: 160.5, 1998: 163.0, 1999: 166.6, 2000: 172.2, 2001: 177.1, 2002: 179.9, 2003: 184.0, 2004: 188.9, 2005: 195.3, 2006: 201.6, 2007: 207.3, 2008: 215.3, 2009: 214.5, 2010: 218.1, 2011: 224.9, 2012: 229.6, 2013: 233.0, 2014: 236.7, 2015: 237.0, 2016: 240.0, 2017: 245.1, 2018: 251.1, 2019: 255.7, 2020: 258.8, 2021: 271.0, 2022: 292.7, 2023: 304.7, 2024: 313.7, 2025: 322.0, 2026: 330.0 };
+const CPI = { 1960: 29.6, 1961: 29.9, 1962: 30.2, 1963: 30.6, 1964: 31.0, 1965: 31.5, 1966: 32.4, 1967: 33.4, 1968: 34.8, 1969: 36.7, 1970: 38.8, 1971: 40.5, 1972: 41.8, 1973: 44.4, 1974: 49.3, 1975: 53.8, 1976: 56.9, 1977: 60.6, 1978: 65.2, 1979: 72.6, 1980: 82.4, 1981: 90.9, 1982: 96.5, 1983: 99.6, 1984: 103.9, 1985: 107.6, 1986: 109.6, 1987: 113.6, 1988: 118.3, 1989: 124.0, 1990: 130.7, 1991: 136.2, 1992: 140.3, 1993: 144.5, 1994: 148.2, 1995: 152.4, 1996: 156.9, 1997: 160.5, 1998: 163.0, 1999: 166.6, 2000: 172.2, 2001: 177.1, 2002: 179.9, 2003: 184.0, 2004: 188.9, 2005: 195.3, 2006: 201.6, 2007: 207.3, 2008: 215.3, 2009: 214.5, 2010: 218.1, 2011: 224.9, 2012: 229.6, 2013: 233.0, 2014: 236.7, 2015: 237.0, 2016: 240.0, 2017: 245.1, 2018: 251.1, 2019: 255.7, 2020: 258.8, 2021: 271.0, 2022: 292.7, 2023: 304.7, 2024: 313.7, 2025: 322.0, 2026: 330.0 };
 const cpi = y => { y = Math.max(1960, Math.min(NOW, y)); while (CPI[y] == null && y > 1960) y--; return CPI[y] || CPI[1960]; };
 const cpiFactor = startY => cpi(startY) / CPI[NOW]; // <1: deflates nominal → real (start-year purchasing power)
 const REAL_FIELDS = new Set(['absGrowth', 'absGrowthTR', 'cagr', 'tsr']);
@@ -41,7 +41,7 @@ const pctStr = v => v == null ? '—' : (v < 0 ? '−' : '+') + (Math.abs(v) >= 
 function metricVal(s, p) {
   if (!s.m || s.m[p.field] == null) return null;
   let v = s.m[p.field];
-  if (state.real && REAL_FIELDS.has(p.field) && !s.delisted) { // inflation-adjust return metrics into real terms
+  if (state.real && REAL_FIELDS.has(p.field) && !s.delisted && s.kind !== 'crypto') { // inflation-adjust returns (not the crypto reference / dead names)
     const f = cpiFactor(s.ipoYear), yrs = Math.max(NOW - s.ipoYear, 1);
     v = (p.field === 'cagr' || p.field === 'tsr') ? ((1 + v / 100) * Math.pow(f, 1 / yrs) - 1) * 100 : ((1 + v / 100) * f - 1) * 100;
   }
@@ -135,9 +135,10 @@ function goHome() {
   const gi = document.getElementById('globeInfo'); if (gi) gi.classList.add('hidden');
   const sr = document.getElementById('searchResults'); if (sr) { sr.classList.add('hidden'); sr.innerHTML = ''; }
   const sb = document.getElementById('search'); if (sb) sb.value = '';
-  state = { lens: PERSP[0].id, region: 'All', sector: 'All' };
+  state = { lens: PERSP[0].id, region: 'All', sector: 'All', real: false };
   const rs = document.getElementById('regionSel'); if (rs) rs.value = 'All';
   const ss = document.getElementById('sectorSel'); if (ss) ss.value = 'All';
+  const rt = document.getElementById('realToggle'); if (rt) rt.checked = false;
   $$('.lens').forEach(b => b.classList.toggle('on', b.dataset.id === PERSP[0].id));
   try { history.replaceState(null, '', location.pathname); } catch (e) {}
   render();
@@ -399,7 +400,7 @@ function openDetail(id) {
   const m = s.m;
   const cell = (k, val, cls) => `<div class="d-cell"><div class="k">${k}</div><div class="v ${cls || ''}">${val}</div></div>`;
   const pct = (x, suff = '%') => x == null ? '—' : (x < 0 ? '−' : '') + Math.abs(x) + suff;
-  const grow = pctBig(m.absGrowth);
+  const grow = pctBig(metricVal(s, { field: 'absGrowth' })); // real-aware so the drawer matches the toggle + its curve
 
   $('#detailBody').innerHTML =
     `<div class="d-flag">${s.flag}</div>
@@ -418,9 +419,9 @@ function openDetail(id) {
      <div class="d-sec-h">Growth</div>
      <div class="d-grid">
        ${cell('Price return', grow, m.absGrowth >= 0 ? 'pos' : 'neg')}
-       ${cell('With dividends', pctBig(m.absGrowthTR), (m.absGrowthTR || 0) >= 0 ? 'pos' : 'neg')}
-       ${cell('Annual (CAGR)', pct(m.cagr), m.cagr >= 0 ? 'pos' : 'neg')}
-       ${cell('Total return /yr', pct(m.tsr), m.tsr >= 0 ? 'pos' : 'neg')}
+       ${cell('With dividends', pctBig(metricVal(s, { field: 'absGrowthTR' })), (m.absGrowthTR || 0) >= 0 ? 'pos' : 'neg')}
+       ${cell('Annual (CAGR)', pct(metricVal(s, { field: 'cagr' })), m.cagr >= 0 ? 'pos' : 'neg')}
+       ${cell('Total return /yr', pct(metricVal(s, { field: 'tsr' })), m.tsr >= 0 ? 'pos' : 'neg')}
      </div>
      <div class="d-sec-h">Dividends</div>
      <div class="d-grid">
@@ -467,14 +468,15 @@ function pathFor(s, startYear) {
   if (s.series && s.series.length) {
     const seg = s.series.filter(p => p[0] >= start);
     if (seg.length > 1) { const base = seg[0][1]; out = seg.map(p => [p[0], 100 * p[1] / base]); }
-  }
-  if (!out) { const g = (s.m.cagr || 0) / 100; out = []; for (let y = start; y <= NOW; y++) out.push([y, 100 * Math.pow(1 + g, y - start)]); }
-  if (state.real) { const cs = cpi(start); out = out.map(([y, v]) => [y, v * cs / cpi(y)]); } // deflate into start-year dollars
+    else return null; // has a real series but it doesn't reach `start` (e.g. delisted before then) — don't fabricate a curve
+  } else { const g = (s.m.cagr || 0) / 100; out = []; for (let y = start; y <= NOW; y++) out.push([y, 100 * Math.pow(1 + g, y - start)]); }
+  if (state.real && !s.delisted && s.kind !== 'crypto') { const cs = cpi(start); out = out.map(([y, v]) => [y, v * cs / cpi(y)]); } // deflate to start-year $
   return out;
 }
-function tmValue(s, startYear) { const p = pathFor(s, startYear); return p[p.length - 1][1]; }
+function tmValue(s, startYear) { const p = pathFor(s, startYear); return p ? p[p.length - 1][1] : null; }
 function tmValueStr(s, startYear) {
   const v = tmValue(s, startYear);
+  if (v == null) return '—';
   return v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M' : v >= 1000 ? '$' + commas(v) : '$' + v.toFixed(0);
 }
 
@@ -496,6 +498,7 @@ function curveSVG(path, w, h, neg) {
 }
 function growthCurveSVG(s) {
   const path = pathFor(s, s.ipoYear);
+  if (!path) return '';
   return `<svg viewBox="0 0 380 120" preserveAspectRatio="none">${curveSVG(path, 380, 120, (s.m.cagr || 0) < 0)}</svg>`;
 }
 
@@ -512,15 +515,18 @@ function renderTM() {
   let y = parseInt($('#tmYear').value || s.ipoYear, 10);
   const start = Math.max(y, s.ipoYear);
   const path = pathFor(s, y);
+  if (!path) { $('#tmResult').innerHTML = `<span class="mult">${esc(s.name)} had no trading history that year${s.delisted ? ` (delisted ${s.delistYear})` : ''}.</span>`; $('#tmChart').innerHTML = ''; return; }
   const end = path[path.length - 1][1];
   const endYr = path[path.length - 1][0]; // delisted stocks' series stop at delisting, not NOW
   const mult = end / 100;
   const neg = end < 100;
+  const yrsShown = Math.max(endYr - start, 1);
+  const cagrShown = (Math.pow(mult, 1 / yrsShown) - 1) * 100; // realized CAGR over the CHOSEN span (matches the $ value; real-$ aware via pathFor)
   const note = (y < s.ipoYear ? ` <span class="mult">(${s.name} only listed in ${s.ipoYear})</span>` : '')
     + (s.delisted ? ` <span class="mult">— delisted ${s.delistYear}</span>` : '');
   $('#tmResult').innerHTML =
     `<span>$100 in ${start} →</span> <span class="big ${neg ? 'neg' : ''}">${tmValueStr(s, y)}</span>
-     <span class="mult">that's ${mult >= 1 ? mult.toFixed(mult < 10 ? 1 : 0) + '×' : '−' + ((1 - mult) * 100).toFixed(0) + '%'} over ${endYr - start} years · ${s.m.cagr}%/yr</span>${note}`;
+     <span class="mult">that's ${mult >= 1 ? mult.toFixed(mult < 10 ? 1 : 0) + '×' : '−' + ((1 - mult) * 100).toFixed(0) + '%'} over ${endYr - start} years · ${cagrShown.toFixed(1)}%/yr${state.real ? ' real' : ''}</span>${note}`;
   $('#tmChart').innerHTML = curveSVG(path, 720, 230, neg) + tmAxis(path, 720, 230);
 }
 function tmAxis(path, w, h) {
@@ -557,16 +563,23 @@ function renderCompare() {
   if (!a || !b) return;
   const start = Math.max(a.ipoYear, b.ipoYear);
   const pa = pathFor(a, start), pb = pathFor(b, start);
+  if (!pa || !pb) { // histories don't overlap (e.g. a delisted name vs a stock that IPO'd later)
+    $('#cmpChart').innerHTML = ''; $('#cmpLegend').innerHTML = '';
+    $('#cmpTable').innerHTML = `<p class="cmp-none">${esc(a.name)} and ${esc(b.name)} never traded at the same time — no shared $100 race to chart. Pick two with overlapping histories.</p>`;
+    return;
+  }
   const endA = pa[pa.length - 1][1], endB = pb[pb.length - 1][1];
+  const endsEarly = (a.delisted && pa[pa.length - 1][0] < NOW) || (b.delisted && pb[pb.length - 1][0] < NOW);
+  const mv = (s, field) => metricVal(s, { field }); // real-aware CAGR/TSR so the table matches the (real) curve
   $('#cmpChart').innerHTML = twoCurveSVG(pa, pb, 720, 240);
   $('#cmpLegend').innerHTML =
     `<span class="cl" style="color:${CMP_A}">■ ${esc(a.flag)} ${esc(a.name)} → <b>${money(endA)}</b></span>
      <span class="cl" style="color:${CMP_B}">■ ${esc(b.flag)} ${esc(b.name)} → <b>${money(endB)}</b></span>
-     <span class="cl-since">$100 since ${start}${(a.delisted || b.delisted) ? ' · until delisting' : ''}</span>`;
+     <span class="cl-since">$100 since ${start}${endsEarly ? ' · until delisting' : ''}${state.real ? ' · real $' : ''}</span>`;
   const rows = [
     ['$100 grew to', () => endA, () => endB, 'hi'],
-    ['Annual return (CAGR)', a.m.cagr, b.m.cagr, 'hi', '%/yr'],
-    ['Total return /yr', a.m.tsr, b.m.tsr, 'hi', '%/yr'],
+    ['Annual return (CAGR)', () => mv(a, 'cagr'), () => mv(b, 'cagr'), 'hi', '%/yr'],
+    ['Total return /yr', () => mv(a, 'tsr'), () => mv(b, 'tsr'), 'hi', '%/yr'],
     ['Current yield', a.m.curYield, b.m.curYield, 'hi', '%'],
     ['Beat S&P /yr', a.m.alphaSpy, b.m.alphaSpy, 'hi', '%/yr'],
     ['P/E', a.m.pe, b.m.pe, 'lo', 'raw'],

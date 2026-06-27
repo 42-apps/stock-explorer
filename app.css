@@ -226,6 +226,7 @@ body.banner-on #lensRail{top:calc(67px + var(--banner-h,36px) + 6px);height:calc
 .cmp-t th:first-child,.cmp-t td:first-child{text-align:left;color:var(--ink-dim);font-weight:600}
 .cmp-t td.win{color:var(--mint);font-weight:800}
 .cmp-t td.win::after{content:' ✓';font-size:11px;color:var(--green-d)}
+.cmp-none{color:var(--ink-faint);font-size:14px;text-align:center;padding:30px 10px}
 
 /* ---------- real-$ toggle · worst-entry · honesty meter ---------- */
 #realSeg{cursor:pointer;user-select:none}
